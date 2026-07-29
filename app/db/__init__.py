@@ -1,0 +1,1 @@
+#Defines the shared Base class for all models.
