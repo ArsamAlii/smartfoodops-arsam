@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey,String
-from sqlalpchemy.orm import Mapped,Mapped_column
+from sqlalchemy.orm import Mapped,mapped_column, relationship
 
 from app.db.base import Base
 
@@ -37,4 +37,17 @@ class Restaurant(Base):
         DateTime,
         default= datetime.utcnow,
         nullable=False,
+    )
+
+    owner: Mapped["User"] = relationship(
+        back_populates="restaurants"
+    )
+
+    categories: Mapped[list["MenuCategory"]] = relationship(
+        back_populates="restaurant",
+        cascade="all, delete-orphan"
+    )
+
+    orders: Mapped[list["Order"]] = relationship(
+        back_populates="restaurant"
     )

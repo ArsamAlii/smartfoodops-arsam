@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -41,4 +41,34 @@ class Order(Base):
         DateTime,
         default=datetime.utcnow,
         nullable=False,
+    )
+
+
+    customer: Mapped["User"] = relationship(
+        back_populates="customer_orders",
+        foreign_keys=[customer_id]
+    )
+
+    rider: Mapped["User"] = relationship(
+        back_populates="assigned_orders",
+        foreign_keys=[rider_id]
+    )
+
+    restaurant: Mapped["Restaurant"] = relationship(
+        back_populates="orders"
+    )
+
+    order_items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+    payment: Mapped["Payment"] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+    status_history: Mapped[list["OrderStatusHistory"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan"
     )

@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -42,4 +42,9 @@ class Payment(Base):
         DateTime,
         default=datetime.utcnow,
         nullable=False,
+    )
+
+
+    order: Mapped["Order"] = relationship(
+        back_populates="payment"
     )

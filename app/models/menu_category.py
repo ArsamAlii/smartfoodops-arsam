@@ -1,5 +1,5 @@
 from sqlalchemy import ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -22,4 +22,13 @@ class MenuCategory(Base):
         Integer,
         default=0,
         nullable=False,
+    )
+
+    restaurant: Mapped["Restaurant"] = relationship(
+        back_populates="categories"
+    )
+
+    menu_items: Mapped[list["MenuItem"]] = relationship(
+        back_populates="category",
+        cascade="all, delete-orphan"
     )

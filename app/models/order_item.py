@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import ForeignKey, Integer, Numeric
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -30,3 +30,11 @@ class OrderItem(Base):
         Numeric(10, 2),
         nullable=False,
     )
+
+    order: Mapped["Order"] = relationship(
+    back_populates="order_items"
+)
+
+menu_item: Mapped["MenuItem"] = relationship(
+    back_populates="order_items"
+)

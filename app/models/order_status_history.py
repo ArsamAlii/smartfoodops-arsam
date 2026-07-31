@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -31,3 +31,7 @@ class OrderStatusHistory(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
+order: Mapped["Order"] = relationship(
+    back_populates="status_history"
+)

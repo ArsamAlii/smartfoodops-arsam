@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, ForeignKey, Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
-import decimal from Decimal
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from decimal import Decimal
 from app.db.base import Base
 
 
@@ -39,4 +39,10 @@ class MenuItem(Base):
         nullable=False,
     )
 
-    
+    category: Mapped["MenuCategory"] = relationship(
+        back_populates="menu_items"
+    )
+
+    order_items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="menu_item"
+    )
