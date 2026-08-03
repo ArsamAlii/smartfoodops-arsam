@@ -32,9 +32,9 @@ class OrderItem(Base):
     )
 
     order: Mapped["Order"] = relationship(
-    back_populates="order_items"
-)
+        back_populates="order_items"
+    )
 
-menu_item: Mapped["MenuItem"] = relationship(
-    back_populates="order_items"
-)
+    menu_item: Mapped["MenuItem"] = relationship(
+        back_populates="order_items"
+    )
