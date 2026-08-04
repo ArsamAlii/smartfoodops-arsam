@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta, timezone
-
+from dotenv import load_dotenv
 from jose import JWTError, jwt
+import os
 from passlib.context import CryptContext
 # Password hashing configuration
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT configuration
-SECRET_KEY = "meow_is_my_key"
+
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
