@@ -1,6 +1,6 @@
 #Creates the Engine and Session factory.
 from sqlalchemy import create_engine #engine: manager of db connection
-from sqlalchemy.arm import sessionmaker #each http get a new session from this factory
+from sqlalchemy.orm import sessionmaker #each http get a new session from this factory
 import os
 from dotenv import load_dotenv
 
@@ -14,7 +14,7 @@ DATABASE_URL= os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 
 #create a session factory
-sessionLocal = sessionmaker(
+SessionLocal = sessionmaker(
     autocommit = False,#so nothing gets saved auto (you have more control)
     autoflush = False, #sqlalchemy wont send any changes auto before every query
     bind = engine, #every session ytou create should use a engine

@@ -9,9 +9,8 @@ class User(Base):#user is a table in postgresql(creates a database model)
 
     user_id: Mapped[int] = mapped_column(primary_key=True)
 
-    username: Mapped[str] = mapped_column(
+    full_name: Mapped[str] = mapped_column(
         String(50),
-        unique=True,
         nullable=False,
     )
 

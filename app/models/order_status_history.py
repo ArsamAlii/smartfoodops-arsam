@@ -32,6 +32,6 @@ class OrderStatusHistory(Base):
         nullable=False,
     )
 
-order: Mapped["Order"] = relationship(
-    back_populates="status_history"
-)
+    order: Mapped["Order"] = relationship(
+        back_populates="status_history"
+    )
