@@ -3,9 +3,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+from datetime import datetime
+from sqlalchemy import DateTime
+
 class MenuCategory(Base):
     __tablename__="menu_categories"
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
     category_id: Mapped[int]= mapped_column(primary_key=True)
 
     restaurant_id: Mapped[int]= mapped_column(

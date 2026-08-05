@@ -4,13 +4,15 @@ from fastapi import FastAPI
 from app.db.database import engine
 from app.db.base import Base
 
-# Import models so SQLAlchemy registers all tables
+# Import all models so SQLAlchemy registers every table
 import app.models.users
 import app.models.restaurant
+import app.models.menu_category   # NEW
 
 # Routers
 from app.api.auth import router as auth_router
 from app.api.restaurant import router as restaurant_router
+from app.api.menu_category import router as menu_category_router
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)
@@ -24,6 +26,7 @@ app = FastAPI(
 # Register API routers
 app.include_router(auth_router)
 app.include_router(restaurant_router)
+app.include_router(menu_category_router)   # NEW
 
 
 # ------------------------------------------------------------------
