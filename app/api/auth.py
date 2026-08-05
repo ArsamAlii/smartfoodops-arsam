@@ -12,6 +12,9 @@ from app.services.auth_service import (
     login_user,
 )
 
+from app.api.dependencies import get_current_user
+from app.models.users import User
+from fastapi.security import OAuth2PasswordRequestForm
 
 router = APIRouter(
     prefix="/auth",
@@ -56,16 +59,16 @@ def register(user_data: RegisterRequest, db: Session = Depends(get_db)):
             detail=str(e)
         )
 
-@router.post("/login",response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse)
 def login(
-    credentials: LoginRequest,
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
     try:
         token = login_user(
             db,
-            credentials.email,
-            credentials.password,
+            form_data.username,   # username field contains the email
+            form_data.password,
         )
 
         return TokenResponse(
@@ -78,3 +81,15 @@ def login(
             status_code=401,
             detail=str(e),
         )
+
+
+@router.get("/me")
+def get_me(
+    current_user: User = Depends(get_current_user),
+):
+    return {
+        "user_id": current_user.user_id,
+        "full_name": current_user.full_name,
+        "email": current_user.email,
+        "role": current_user.role,
+    }
