@@ -48,3 +48,40 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_owner(
+    current_user: User = Depends(get_current_user),
+) -> User:
+
+    if current_user.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can perform this action",
+        )
+
+    return current_user
+
+def get_current_customer(
+    current_user: User = Depends(get_current_user),
+) -> User:
+
+    if current_user.role != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only customers can perform this action",
+        )
+
+    return current_user
+
+def get_current_rider(
+    current_user: User = Depends(get_current_user),
+) -> User:
+
+    if current_user.role != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can perform this action",
+        )
+
+    return current_user
