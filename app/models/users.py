@@ -1,7 +1,7 @@
 from datetime import datetime
-from sqlalchemy import DateTime,String #sql datatypes
+from sqlalchemy import DateTime, String, Enum #sql datatypes
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from app.models.enums import UserRole
 from app.db.base import Base
 
 class User(Base):#user is a table in postgresql(creates a database model)
@@ -25,9 +25,14 @@ class User(Base):#user is a table in postgresql(creates a database model)
         nullable=False,
     )
 
-    role: Mapped[str] = mapped_column(
-        String(20),
+    role: Mapped[UserRole] = mapped_column(
+        Enum(
+            UserRole,
+            name="user_roles",
+            values_callable=lambda enum: [e.value for e in enum],
+        ),
         nullable=False,
+        default=UserRole.CUSTOMER,
     )
 
     created_at: Mapped[datetime] = mapped_column(
