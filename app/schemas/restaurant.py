@@ -5,27 +5,25 @@ from pydantic import BaseModel, ConfigDict
 
 class RestaurantBase(BaseModel):
     name: str
+    cuisine: str
     address: str
-    phone_number: str
 
 
 class RestaurantCreate(RestaurantBase):
-    logo_url: str | None = None
+    pass
 
 
 class RestaurantUpdate(BaseModel):
     name: str | None = None
+    cuisine: str | None = None
     address: str | None = None
-    phone_number: str | None = None
-    logo_url: str | None = None
-    is_active: bool | None = None
+    is_open: bool | None = None
 
 
 class RestaurantResponse(RestaurantBase):
     restaurant_id: int
     user_id: int
-    logo_url: str | None = None
-    is_active: bool
+    is_open: bool
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
