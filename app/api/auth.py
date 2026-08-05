@@ -1,20 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user
 from app.db.database import get_db
+from app.models.users import User
 from app.schemas.auth import (
     RegisterRequest,
-    LoginRequest,
     TokenResponse,
 )
 from app.services.auth_service import (
-    register_user,
     login_user,
+    register_user,
 )
-
-from app.api.dependencies import get_current_user
-from app.models.users import User
-from fastapi.security import OAuth2PasswordRequestForm
 
 router = APIRouter(
     prefix="/auth",
@@ -22,43 +20,32 @@ router = APIRouter(
 )
 
 
-# @router.post("/register")
-# def register(
-#     user_data: RegisterRequest,
-#     db: Session = Depends(get_db),
-# ):
-#     try:
-#         user = register_user(db, user_data)
-#         return {
-#             "message": "User registered successfully",
-#             "user_id": user.user_id,
-#         }
-
-#     except ValueError as e:
-#         raise HTTPException(
-#             status_code=400,#http 400 bad request
-#             detail=str(e), #enmmail alr registered
-#         )
-
-from fastapi import HTTPException
-
+# ------------------------------------------------------------------
+# Register User
+# ------------------------------------------------------------------
 @router.post("/register")
-def register(user_data: RegisterRequest, db: Session = Depends(get_db)):
-
+def register(
+    user_data: RegisterRequest,
+    db: Session = Depends(get_db),
+):
     try:
         user = register_user(db, user_data)
 
         return {
             "message": "User registered successfully",
-            "user_id": user.user_id
+            "user_id": user.user_id,
         }
 
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=str(e)
+            detail=str(e),
         )
 
+
+# ------------------------------------------------------------------
+# Login
+# ------------------------------------------------------------------
 @router.post("/login", response_model=TokenResponse)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -66,9 +53,9 @@ def login(
 ):
     try:
         token = login_user(
-            db,
-            form_data.username,   # username field contains the email
-            form_data.password,
+            db=db,
+            email=form_data.username,
+            password=form_data.password,
         )
 
         return TokenResponse(
@@ -83,6 +70,9 @@ def login(
         )
 
 
+# ------------------------------------------------------------------
+# Current User
+# ------------------------------------------------------------------
 @router.get("/me")
 def get_me(
     current_user: User = Depends(get_current_user),
@@ -91,5 +81,5 @@ def get_me(
         "user_id": current_user.user_id,
         "full_name": current_user.full_name,
         "email": current_user.email,
-        "role": current_user.role,
+        "role": current_user.role.value,
     }

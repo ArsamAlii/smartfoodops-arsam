@@ -1,11 +1,13 @@
+from collections.abc import Callable
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.db.database import get_db
-from app.models.users import User
 from app.models.enums import UserRole
+from app.models.users import User
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/auth/login"
@@ -17,10 +19,9 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Get the currently authenticated user from the JWT token.
+    Returns the authenticated user from the JWT access token.
     """
 
-    # Decode JWT
     payload = decode_access_token(token)
 
     if not payload:
@@ -29,7 +30,6 @@ def get_current_user(
             detail="Invalid token",
         )
 
-    # Extract user ID
     user_id = payload.get("sub")
 
     if user_id is None:
@@ -38,7 +38,6 @@ def get_current_user(
             detail="Invalid token",
         )
 
-    # Fetch user from database
     user = (
         db.query(User)
         .filter(User.user_id == int(user_id))
@@ -54,11 +53,13 @@ def get_current_user(
     return user
 
 
-def require_role(*allowed_roles: UserRole):
+def require_role(
+    *allowed_roles: UserRole,
+) -> Callable:
     """
-    Dependency factory for role-based access control.
+    Role-Based Access Control dependency.
 
-    Usage:
+    Examples:
         Depends(require_role(UserRole.ADMIN))
 
         Depends(require_role(

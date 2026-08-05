@@ -1,18 +1,20 @@
 from sqlalchemy.orm import Session
 
-from app.models.users import User
-from app.schemas.auth import RegisterRequest
 from app.core.security import (
+    create_access_token,
     hash_password,
     verify_password,
-    create_access_token,
 )
+from app.models.enums import UserRole
+from app.models.users import User
+from app.schemas.auth import RegisterRequest
 
 
-# function: register user
+# ------------------------------------------------------------------
+# Register User Service
+# ------------------------------------------------------------------
 def register_user(db: Session, user_data: RegisterRequest) -> User:
-
-    # check if email already exists
+    """Check for existing email and create a new user record."""
     existing_user = (
         db.query(User)
         .filter(User.email == user_data.email)
@@ -22,12 +24,11 @@ def register_user(db: Session, user_data: RegisterRequest) -> User:
     if existing_user:
         raise ValueError("Email already registered")
 
-    # create user object
     new_user = User(
         full_name=user_data.name,
         email=user_data.email,
         password_hash=hash_password(user_data.password),
-        role=user_data.role
+        role=user_data.role,
     )
 
     db.add(new_user)
@@ -37,8 +38,11 @@ def register_user(db: Session, user_data: RegisterRequest) -> User:
     return new_user
 
 
+# ------------------------------------------------------------------
+# Login User Service
+# ------------------------------------------------------------------
 def login_user(db: Session, email: str, password: str) -> str:
-    # Find user by email
+    """Authenticate user credentials and return a signed JWT access token."""
     user = (
         db.query(User)
         .filter(User.email == email)
@@ -48,15 +52,17 @@ def login_user(db: Session, email: str, password: str) -> str:
     if not user:
         raise ValueError("Invalid email or password")
 
-    # Verify password
     if not verify_password(password, user.password_hash):
         raise ValueError("Invalid email or password")
+
+    # Ensure role is string serialized for JWT payload
+    role_claim = user.role.value if isinstance(user.role, UserRole) else str(user.role)
 
     # Generate JWT
     access_token = create_access_token(
         {
             "sub": str(user.user_id),
-            "role": user.role,
+            "role": role_claim,
         }
     )
 

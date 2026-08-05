@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_role
 from app.db.database import get_db
-from app.api.dependencies import get_current_user
 
+from app.models.enums import UserRole
 from app.models.users import User
 from app.models.restaurant import Restaurant
 from app.models.menu_category import MenuCategory
@@ -36,17 +37,11 @@ def create_new_menu_item(
     category_id: int,
     item_data: MenuItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
 
-    # Only owners can create menu items
-    if current_user.role != "owner":
-        raise HTTPException(
-            status_code=403,
-            detail="Only restaurant owners can create menu items",
-        )
-
-    # Find category
     category = (
         db.query(MenuCategory)
         .filter(MenuCategory.category_id == category_id)
@@ -55,20 +50,22 @@ def create_new_menu_item(
 
     if category is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found",
         )
 
-    # Verify restaurant ownership
     restaurant = (
         db.query(Restaurant)
-        .filter(Restaurant.restaurant_id == category.restaurant_id)
+        .filter(
+            Restaurant.restaurant_id == category.restaurant_id,
+            Restaurant.user_id == current_user.user_id,
+        )
         .first()
     )
 
-    if restaurant.user_id != current_user.user_id:
+    if restaurant is None:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not own this restaurant",
         )
 
@@ -117,7 +114,7 @@ def get_single_menu_item(
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
 
@@ -133,7 +130,9 @@ def update_single_menu_item(
     menu_item_id: int,
     item_data: MenuItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
 
     try:
@@ -144,7 +143,7 @@ def update_single_menu_item(
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
 
@@ -156,13 +155,16 @@ def update_single_menu_item(
 
     restaurant = (
         db.query(Restaurant)
-        .filter(Restaurant.restaurant_id == category.restaurant_id)
+        .filter(
+            Restaurant.restaurant_id == category.restaurant_id,
+            Restaurant.user_id == current_user.user_id,
+        )
         .first()
     )
 
-    if restaurant.user_id != current_user.user_id:
+    if restaurant is None:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not own this restaurant",
         )
 
@@ -180,7 +182,9 @@ def update_single_menu_item(
 def delete_single_menu_item(
     menu_item_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
 
     try:
@@ -191,7 +195,7 @@ def delete_single_menu_item(
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
 
@@ -203,13 +207,16 @@ def delete_single_menu_item(
 
     restaurant = (
         db.query(Restaurant)
-        .filter(Restaurant.restaurant_id == category.restaurant_id)
+        .filter(
+            Restaurant.restaurant_id == category.restaurant_id,
+            Restaurant.user_id == current_user.user_id,
+        )
         .first()
     )
 
-    if restaurant.user_id != current_user.user_id:
+    if restaurant is None:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not own this restaurant",
         )
 

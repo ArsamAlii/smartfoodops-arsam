@@ -1,24 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_role
 from app.db.database import get_db
-from app.api.dependencies import get_current_user
-
-from app.models.users import User
+from app.models.enums import UserRole
 from app.models.restaurant import Restaurant
-
+from app.models.users import User
 from app.schemas.menu_category import (
     MenuCategoryCreate,
-    MenuCategoryUpdate,
     MenuCategoryResponse,
+    MenuCategoryUpdate,
 )
-
 from app.services.menu_category_service import (
     create_category,
+    delete_category,
     get_categories_by_restaurant,
     get_category,
     update_category,
-    delete_category,
 )
 
 router = APIRouter(
@@ -27,25 +25,18 @@ router = APIRouter(
 )
 
 
-# -----------------------------
+# -------------------------------------------------
 # Create Category
-# -----------------------------
+# -------------------------------------------------
 @router.post("/", response_model=MenuCategoryResponse)
 def create_new_category(
     restaurant_id: int,
     category: MenuCategoryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
-
-    # Only owners can create categories
-    if current_user.role != "owner":
-        raise HTTPException(
-            status_code=403,
-            detail="Only restaurant owners can create categories",
-        )
-
-    # Verify the restaurant belongs to this owner
     restaurant = (
         db.query(Restaurant)
         .filter(
@@ -57,7 +48,7 @@ def create_new_category(
 
     if restaurant is None:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not own this restaurant",
         )
 
@@ -68,9 +59,9 @@ def create_new_category(
     )
 
 
-# -----------------------------
+# -------------------------------------------------
 # Get Categories of Restaurant
-# -----------------------------
+# -------------------------------------------------
 @router.get(
     "/restaurant/{restaurant_id}",
     response_model=list[MenuCategoryResponse],
@@ -79,16 +70,15 @@ def list_categories(
     restaurant_id: int,
     db: Session = Depends(get_db),
 ):
-
     return get_categories_by_restaurant(
         db,
         restaurant_id,
     )
 
 
-# -----------------------------
+# -------------------------------------------------
 # Get Single Category
-# -----------------------------
+# -------------------------------------------------
 @router.get(
     "/{category_id}",
     response_model=MenuCategoryResponse,
@@ -97,20 +87,19 @@ def get_single_category(
     category_id: int,
     db: Session = Depends(get_db),
 ):
-
     try:
         return get_category(db, category_id)
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
 
 
-# -----------------------------
+# -------------------------------------------------
 # Update Category
-# -----------------------------
+# -------------------------------------------------
 @router.put(
     "/{category_id}",
     response_model=MenuCategoryResponse,
@@ -119,13 +108,13 @@ def edit_category(
     category_id: int,
     category_data: MenuCategoryUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
-
     try:
         category = get_category(db, category_id)
 
-        # Verify ownership
         restaurant = (
             db.query(Restaurant)
             .filter(
@@ -137,7 +126,7 @@ def edit_category(
 
         if restaurant is None:
             raise HTTPException(
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not own this restaurant",
             )
 
@@ -149,21 +138,22 @@ def edit_category(
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
 
 
-# -----------------------------
+# -------------------------------------------------
 # Delete Category
-# -----------------------------
+# -------------------------------------------------
 @router.delete("/{category_id}")
 def remove_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
-
     try:
         category = get_category(db, category_id)
 
@@ -178,7 +168,7 @@ def remove_category(
 
         if restaurant is None:
             raise HTTPException(
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not own this restaurant",
             )
 
@@ -193,6 +183,6 @@ def remove_category(
 
     except ValueError as e:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
