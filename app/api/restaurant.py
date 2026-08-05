@@ -5,11 +5,17 @@ from sqlalchemy.orm import Session
 # Database dependency
 from app.db.database import get_db
 
-# JWT dependency (returns the logged-in user)
-from app.api.dependencies import get_current_user
+# Authentication & Authorization dependencies
+from app.api.dependencies import (
+    get_current_user,
+    require_role,
+)
 
-# User model (used for authentication)
+# User model
 from app.models.users import User
+
+# User Roles
+from app.models.enums import UserRole
 
 # Restaurant schemas
 from app.schemas.restaurant import (
@@ -39,24 +45,17 @@ router = APIRouter(
 # ==================================================================
 # CREATE RESTAURANT
 # ==================================================================
-# Only authenticated users with role "owner"
-# are allowed to create restaurants.
+# Only Restaurant Admins can create restaurants.
 # ==================================================================
 
 @router.post("/", response_model=RestaurantResponse)
 def create_new_restaurant(
     restaurant_data: RestaurantCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
-    # Only owners can create restaurants
-    if current_user.role != "owner":
-        raise HTTPException(
-            status_code=403,
-            detail="Only restaurant owners can create restaurants",
-        )
-
-    # Call service layer
     restaurant = create_restaurant(
         db=db,
         restaurant_data=restaurant_data,
@@ -70,7 +69,6 @@ def create_new_restaurant(
 # GET ALL RESTAURANTS
 # ==================================================================
 # Public endpoint.
-# Returns every restaurant in the database.
 # ==================================================================
 
 @router.get("/", response_model=list[RestaurantResponse])
@@ -85,8 +83,6 @@ def get_all_restaurants(
 
 # ==================================================================
 # GET SINGLE RESTAURANT
-# ==================================================================
-# Returns one restaurant by ID.
 # ==================================================================
 
 @router.get("/{restaurant_id}", response_model=RestaurantResponse)
@@ -112,7 +108,8 @@ def get_single_restaurant(
 # ==================================================================
 # UPDATE RESTAURANT
 # ==================================================================
-# Only the owner of the restaurant can update it.
+# Only the Restaurant Admin who owns the restaurant
+# can update it.
 # ==================================================================
 
 @router.put("/{restaurant_id}", response_model=RestaurantResponse)
@@ -120,10 +117,11 @@ def update_single_restaurant(
     restaurant_id: int,
     restaurant_data: RestaurantUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
 
-    # Check if restaurant exists
     restaurant = get_restaurant(
         db,
         restaurant_id,
@@ -135,14 +133,13 @@ def update_single_restaurant(
             detail="Restaurant not found",
         )
 
-    # Check ownership
+    # Ownership check
     if restaurant.user_id != current_user.user_id:
         raise HTTPException(
             status_code=403,
             detail="You do not own this restaurant",
         )
 
-    # Update restaurant
     restaurant = update_restaurant(
         db,
         restaurant,
@@ -155,17 +152,19 @@ def update_single_restaurant(
 # ==================================================================
 # DELETE RESTAURANT
 # ==================================================================
-# Only the owner of the restaurant can delete it.
+# Only the Restaurant Admin who owns the restaurant
+# can delete it.
 # ==================================================================
 
 @router.delete("/{restaurant_id}")
 def delete_single_restaurant(
     restaurant_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.RESTAURANT_ADMIN)
+    ),
 ):
 
-    # Check if restaurant exists
     restaurant = get_restaurant(
         db,
         restaurant_id,
@@ -177,14 +176,13 @@ def delete_single_restaurant(
             detail="Restaurant not found",
         )
 
-    # Check ownership
+    # Ownership check
     if restaurant.user_id != current_user.user_id:
         raise HTTPException(
             status_code=403,
             detail="You do not own this restaurant",
         )
 
-    # Delete restaurant
     delete_restaurant(
         db,
         restaurant,
