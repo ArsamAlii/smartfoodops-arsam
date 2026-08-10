@@ -8,6 +8,7 @@ from app.schemas.order_item import (
     OrderItemCreate,
     OrderItemResponse,
 )
+from app.schemas.payment import PaymentResponse
 
 
 # ------------------------------------------------------------------
@@ -68,11 +69,13 @@ class OrderResponse(BaseModel):
     total_amount: Decimal
     status: OrderStatus
     created_at: datetime
+
     items: list[OrderItemResponse] = Field(
         default_factory=list
     )
 
+    payment: PaymentResponse | None = None
+
     model_config = ConfigDict(
         from_attributes=True
     )
-

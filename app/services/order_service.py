@@ -1,6 +1,5 @@
 from decimal import Decimal
-
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.menu_item import MenuItem
 from app.models.order import Order
@@ -186,8 +185,16 @@ def create_order(
     db.commit()
 
     # -------------------------------------------------------
-    # 17. Refresh Order
+    # 17. Reload Order With Relationships
     # -------------------------------------------------------
-    db.refresh(order)
+    order = (
+        db.query(Order)
+        .options(
+            joinedload(Order.payment),
+            joinedload(Order.items),
+        )
+        .filter(Order.order_id == order.order_id)
+        .first()
+    )
 
     return order
