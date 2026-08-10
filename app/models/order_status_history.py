@@ -25,9 +25,14 @@ class OrderStatusHistory(Base):
     )
 
     # -------------------------------------------------------
-    # Status
+    # Status Transition
     # -------------------------------------------------------
-    status: Mapped[str] = mapped_column(
+    from_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    to_status: Mapped[str] = mapped_column(
         String(30),
         nullable=False,
     )
@@ -35,7 +40,7 @@ class OrderStatusHistory(Base):
     # -------------------------------------------------------
     # Timestamp
     # -------------------------------------------------------
-    created_at: Mapped[datetime] = mapped_column(
+    changed_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
         nullable=False,
