@@ -36,13 +36,14 @@ class PaymentMethod(str, Enum):
 # ------------------------------------------------------------------
 class OrderBase(BaseModel):
     restaurant_id: int
-    payment_method: PaymentMethod
 
 
 # ------------------------------------------------------------------
 # Create Schema
 # ------------------------------------------------------------------
 class OrderCreate(OrderBase):
+    payment_method: PaymentMethod
+
     items: list[OrderItemCreate] = Field(
         min_length=1
     )
@@ -59,13 +60,19 @@ class OrderUpdate(BaseModel):
 # ------------------------------------------------------------------
 # Response Schema
 # ------------------------------------------------------------------
-class OrderResponse(OrderBase):
+class OrderResponse(BaseModel):
     order_id: int
     customer_id: int
+    restaurant_id: int
     rider_id: int | None
     total_amount: Decimal
     status: OrderStatus
     created_at: datetime
-    items: list[OrderItemResponse] = []
+    items: list[OrderItemResponse] = Field(
+        default_factory=list
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
