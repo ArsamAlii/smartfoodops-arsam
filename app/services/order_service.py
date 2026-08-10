@@ -1,4 +1,3 @@
-```python
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -7,6 +6,7 @@ from app.models.menu_item import MenuItem
 from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.order_status_history import OrderStatusHistory
+from app.models.payment import Payment
 from app.models.restaurant import Restaurant
 from app.schemas.order import OrderCreate
 
@@ -52,7 +52,7 @@ def create_order(
     total_amount = Decimal("0.00")
 
     # -------------------------------------------------------
-    # 4. Process each order item
+    # 4. Process Order Items
     # -------------------------------------------------------
     for item_data in order_data.items:
 
@@ -73,7 +73,7 @@ def create_order(
             )
 
         # ---------------------------------------------------
-        # 6. Verify menu item belongs to restaurant
+        # 6. Verify item belongs to restaurant
         # ---------------------------------------------------
         if (
             menu_item.category.restaurant_id
@@ -85,7 +85,7 @@ def create_order(
             )
 
         # ---------------------------------------------------
-        # 7. Verify item is available
+        # 7. Verify availability
         # ---------------------------------------------------
         if not menu_item.is_available:
             raise ValueError(
@@ -101,7 +101,7 @@ def create_order(
             )
 
         # ---------------------------------------------------
-        # 9. Calculate price from database
+        # 9. Calculate item price
         # ---------------------------------------------------
         unit_price = menu_item.price
 
@@ -129,12 +129,48 @@ def create_order(
         menu_item.stock -= item_data.quantity
 
     # -------------------------------------------------------
-    # 12. Set calculated total
+    # 12. Set Order Total
     # -------------------------------------------------------
     order.total_amount = total_amount
 
     # -------------------------------------------------------
-    # 13. Create initial status history
+    # 13. Calculate Tax
+    # -------------------------------------------------------
+    if order_data.payment_method.value == "cod":
+        tax_percentage = Decimal("10.00")
+
+    elif order_data.payment_method.value == "online":
+        tax_percentage = Decimal("6.00")
+
+    elif order_data.payment_method.value == "card":
+        tax_percentage = Decimal("3.00")
+
+    else:
+        raise ValueError(
+            "Unsupported payment method"
+        )
+
+    tax_amount = (
+        total_amount * tax_percentage / Decimal("100")
+    )
+
+    final_amount = total_amount + tax_amount
+    # -------------------------------------------------------
+    # 14. Create Payment
+    # -------------------------------------------------------
+    payment = Payment(
+        order_id=order.order_id,
+        payment_method=order_data.payment_method.value,
+        tax_percentage=tax_percentage,
+        tax_amount=tax_amount,
+        final_amount=final_amount,
+        payment_status="pending",
+    )
+
+    db.add(payment)
+
+    # -------------------------------------------------------
+    # 15. Create Initial Status History
     # -------------------------------------------------------
     status_history = OrderStatusHistory(
         order_id=order.order_id,
@@ -145,14 +181,13 @@ def create_order(
     db.add(status_history)
 
     # -------------------------------------------------------
-    # 14. Commit transaction
+    # 16. Commit Transaction
     # -------------------------------------------------------
     db.commit()
 
     # -------------------------------------------------------
-    # 15. Refresh order
+    # 17. Refresh Order
     # -------------------------------------------------------
     db.refresh(order)
 
     return order
-```
