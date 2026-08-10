@@ -29,7 +29,7 @@ def register(
     db: Session = Depends(get_db),
 ):
     try:
-        user = register_user(db, user_data)
+        user = register_user(db, user_data)#app/services/auth_service.py
 
         return {
             "message": "User registered successfully",

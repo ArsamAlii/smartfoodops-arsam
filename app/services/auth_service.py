@@ -66,4 +66,4 @@ def login_user(db: Session, email: str, password: str) -> str:
         }
     )
 
-    return access_token
+    return access_token 
