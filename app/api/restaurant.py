@@ -1,5 +1,5 @@
 # FastAPI utilities
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 # Database dependency
@@ -48,22 +48,30 @@ router = APIRouter(
 # Only Restaurant Admins can create restaurants.
 # ==================================================================
 
-@router.post("/", response_model=RestaurantResponse)
+@router.post(
+    "/",
+    response_model=RestaurantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_new_restaurant(
     restaurant_data: RestaurantCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_role(UserRole.RESTAURANT_ADMIN)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
-    restaurant = create_restaurant(
-        db=db,
-        restaurant_data=restaurant_data,
-        owner=current_user,
-    )
+    try:
+        restaurant = create_restaurant(
+            db=db,
+            restaurant_data=restaurant_data,
+            owner=current_user,
+        )
 
-    return restaurant
+        return restaurant
 
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
 
 # ==================================================================
 # GET ALL RESTAURANTS
