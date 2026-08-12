@@ -480,6 +480,16 @@ def update_order(
             )
 
         # ---------------------------------------------------
+        # Verify rider is available
+        # ---------------------------------------------------
+
+        if not rider.is_available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected rider is not available.",
+            )
+
+        # ---------------------------------------------------
         # Assign rider
         # ---------------------------------------------------
 
