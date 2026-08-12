@@ -14,14 +14,28 @@ from app.schemas.payment import PaymentResponse
 # ------------------------------------------------------------------
 # Order Status
 # ------------------------------------------------------------------
+# class OrderStatus(str, Enum):
+#     PLACED = "placed"
+#     ACCEPTED = "accepted"
+#     PREPARING = "preparing"
+#     ON_THE_WAY = "on_the_way"
+#     DELIVERED = "delivered"
+#     CANCELLED = "cancelled"
 class OrderStatus(str, Enum):
     PLACED = "placed"
-    ACCEPTED = "accepted"
+    PAYMENT_CONFIRMED = "payment_confirmed"
+    CONFIRMED = "confirmed"
     PREPARING = "preparing"
-    ON_THE_WAY = "on_the_way"
+    READY = "ready"
+    ASSIGNED = "assigned"
+    PICKED_UP = "picked_up"
     DELIVERED = "delivered"
-    CANCELLED = "cancelled"
+    COMPLETED = "completed"
 
+    PAYMENT_FAILED = "payment_failed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    REFUNDED = "refunded"
 
 # ------------------------------------------------------------------
 # Payment Method

@@ -27,7 +27,8 @@ class PaymentBase(BaseModel):
 class PaymentCreate(PaymentBase):
     pass
 
-
+class PaymentStatusUpdate(BaseModel):
+    payment_status: str
 # ------------------------------------------------------------------
 # Response Schema
 # ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -24,35 +24,39 @@ router = APIRouter(
     tags=["Orders"],
 )
 
-
+from fastapi import Header
 # ===========================================================
 # Allowed Order Status Transitions
 # ===========================================================
 
 ALLOWED_STATUS_TRANSITIONS = {
     "restaurant_admin": {
-        "placed": {"accepted"},
-        "accepted": {"preparing"},
+        "placed": {"confirmed", "rejected", "cancelled"},
+        "confirmed": {"preparing", "cancelled"},
+        "preparing": {"ready"},
+        "ready": {"assigned"},
     },
-
     "rider": {
-        "preparing": {"on_the_way"},
-        "on_the_way": {"delivered"},
+        "assigned": {"picked_up"},
+        "picked_up": {"delivered"},
+        "delivered": {"completed"},
     },
 
     "admin": {
-        "placed": {"accepted", "cancelled"},
-        "accepted": {"preparing", "cancelled"},
-        "preparing": {"on_the_way", "cancelled"},
-        "on_the_way": {"delivered", "cancelled"},
+        "placed": {"payment_confirmed", "confirmed", "rejected", "cancelled"},
+        "payment_confirmed": {"confirmed", "rejected", "cancelled"},
+        "confirmed": {"preparing", "cancelled"},
+        "preparing": {"ready", "cancelled"},
+        "ready": {"assigned"},
+        "assigned": {"picked_up"},
+        "picked_up": {"delivered"},
+        "delivered": {"completed"},
     },
 }
-
 
 # ===========================================================
 # Create Order
 # ===========================================================
-
 @router.post(
     "/",
     response_model=OrderResponse,
@@ -62,12 +66,17 @@ def create_new_order(
     order_data: OrderCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+    ),
 ):
     try:
         order = create_order(
             db=db,
             customer_id=current_user.user_id,
             order_data=order_data,
+            idempotency_key=idempotency_key,
         )
 
         return order
@@ -77,8 +86,6 @@ def create_new_order(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
-
-
 # ===========================================================
 # Get My / Accessible Orders
 # ===========================================================
@@ -473,25 +480,23 @@ def update_order(
             )
 
         # ---------------------------------------------------
-        # Restaurant admin can only assign rider
-        # to their own restaurant's order
-        #
-        # This is already checked above when the
-        # restaurant-admin authorization runs.
+        # Assign rider
         # ---------------------------------------------------
 
         order.rider_id = rider.user_id
 
-        # =======================================================
-        # Commit
-        # =======================================================
 
-        db.commit()
+    # =======================================================
+    # Commit
+    # =======================================================
 
-        # -------------------------------------------------------
-        # Refresh
-        # -------------------------------------------------------
+    db.commit()
 
-        db.refresh(order)
 
-        return order
+    # =======================================================
+    # Refresh
+    # =======================================================
+
+    db.refresh(order)
+
+    return order

@@ -1,8 +1,8 @@
 from fastapi import FastAPI
-
+from app.api.payments import router as payments_router
 from app.db.database import engine
 from app.db.base import Base
-
+from app.api.orders import router as orders_router
 # -------------------------------------------------------
 # Models
 # -------------------------------------------------------
@@ -42,7 +42,7 @@ app.include_router(restaurant_router)
 app.include_router(menu_category_router)
 app.include_router(menu_item_router)
 app.include_router(orders_router)
-
+app.include_router(payments_router)
 
 # -------------------------------------------------------
 # Root
