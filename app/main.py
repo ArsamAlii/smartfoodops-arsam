@@ -23,7 +23,7 @@ from app.api.restaurant import router as restaurant_router
 from app.api.menu_category import router as menu_category_router
 from app.api.menu_item import router as menu_item_router
 from app.api.orders import router as orders_router
-
+from app.api.users import router as users_router
 
 # Base.metadata.create_all(bind=engine)
 
@@ -43,7 +43,7 @@ app.include_router(menu_category_router)
 app.include_router(menu_item_router)
 app.include_router(orders_router)
 app.include_router(payments_router)
-
+app.include_router(users_router)
 # -------------------------------------------------------
 # Root
 # -------------------------------------------------------

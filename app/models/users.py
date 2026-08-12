@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String
+from sqlalchemy import Boolean, DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -10,8 +10,16 @@ from app.models.enums import UserRole
 class User(Base):
     __tablename__ = "users"
 
-    user_id: Mapped[int] = mapped_column(primary_key=True)
+    # -------------------------------------------------------
+    # Primary Key
+    # -------------------------------------------------------
+    user_id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
 
+    # -------------------------------------------------------
+    # Basic Information
+    # -------------------------------------------------------
     full_name: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -28,6 +36,9 @@ class User(Base):
         nullable=False,
     )
 
+    # -------------------------------------------------------
+    # User Role
+    # -------------------------------------------------------
     role: Mapped[UserRole] = mapped_column(
         Enum(
             UserRole,
@@ -39,12 +50,27 @@ class User(Base):
         default=UserRole.CUSTOMER,
     )
 
+    # -------------------------------------------------------
+    # Rider Availability
+    # -------------------------------------------------------
+    is_available: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    # -------------------------------------------------------
+    # Audit Information
+    # -------------------------------------------------------
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
         nullable=False,
     )
 
+    # -------------------------------------------------------
+    # Relationships
+    # -------------------------------------------------------
     restaurants: Mapped[list["Restaurant"]] = relationship(
         back_populates="owner"
     )

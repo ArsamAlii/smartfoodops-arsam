@@ -27,9 +27,13 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     password: Optional[str] = None
 
-
 class UserResponse(UserBase):
     user_id: int
     created_at: datetime
+    is_available: bool
 
     model_config = ConfigDict(from_attributes=True)
+    
+
+class UserAvailabilityUpdate(BaseModel):
+    is_available: bool
