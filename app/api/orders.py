@@ -416,7 +416,26 @@ def update_order(
         # ---------------------------------------------------
 
         order.status = new_status
+        # ---------------------------------------------------
+        # Release rider when order is completed/cancelled
+        # ---------------------------------------------------
 
+        if new_status in {"completed", "cancelled"}:
+
+            if order.rider_id is not None:
+
+                rider = (
+                    db.query(User)
+                    .filter(
+                        User.user_id == order.rider_id,
+                        User.role == UserRole.RIDER,
+                    )
+                    .with_for_update()
+                    .first()
+                )
+
+                if rider is not None:
+                    rider.is_available = True
         # ---------------------------------------------------
         # Create Status History
         # ---------------------------------------------------
@@ -458,11 +477,12 @@ def update_order(
         rider = (
             db.query(User)
             .filter(
-                User.user_id == order_data.rider_id
+                User.user_id == order_data.rider_id,
+                User.role == UserRole.RIDER,
             )
+            .with_for_update()
             .first()
         )
-
         if rider is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -473,11 +493,11 @@ def update_order(
         # Verify user is actually a rider
         # ---------------------------------------------------
 
-        if rider.role != UserRole.RIDER:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Selected user is not a rider.",
-            )
+        # if rider.role != UserRole.RIDER:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="Selected user is not a rider.",
+        #     )
 
         # ---------------------------------------------------
         # Verify rider is available
@@ -492,8 +512,8 @@ def update_order(
         # ---------------------------------------------------
         # Assign rider
         # ---------------------------------------------------
-
         order.rider_id = rider.user_id
+        rider.is_available = False
 
 
     # =======================================================
