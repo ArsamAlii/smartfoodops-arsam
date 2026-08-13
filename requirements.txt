@@ -17,3 +17,5 @@ httpx #lets test make requests to fastapi
 
 black #auto format code
 ruff #check for mistake and style issues
+
+temporalio
