@@ -6,6 +6,7 @@ from temporalio.worker import Worker
 from app.workflows.order_workflow import OrderWorkflow
 from app.workflows.activities.order_activities import (
     validate_order_workflow,
+    update_order_status,
 )
 
 
@@ -18,6 +19,7 @@ async def main():
         workflows=[OrderWorkflow],
         activities=[
             validate_order_workflow,
+            update_order_status,
         ],
     )
 
