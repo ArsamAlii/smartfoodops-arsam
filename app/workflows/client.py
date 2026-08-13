@@ -8,11 +8,11 @@ from app.workflows.order_workflow import OrderWorkflow
 async def main():
     client = await Client.connect("localhost:7233")
 
-    workflow_id = "order-workflow-test-20"
+    workflow_id = "order-workflow-1"
 
     handle = await client.start_workflow(
         OrderWorkflow.run,
-        7,
+        1,
         id=workflow_id,
         task_queue="smartfoodops-task-queue",
     )

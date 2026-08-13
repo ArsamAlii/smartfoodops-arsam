@@ -5,6 +5,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from app.workflows.activities.order_activities import (
         validate_order_workflow,
+        update_order_status,
     )
 
 
@@ -12,10 +13,18 @@ with workflow.unsafe.imports_passed_through():
 class OrderWorkflow:
 
     def __init__(self):
-        self.status_history: list[str] = []
+        self.current_status = "placed"
+        self.order_id = None
 
     @workflow.run
     async def run(self, order_id: int) -> str:
+
+        # Save the order ID inside the Workflow state
+        self.order_id = order_id
+
+        # ---------------------------------------------------
+        # Verify that the order exists
+        # ---------------------------------------------------
 
         await workflow.execute_activity(
             validate_order_workflow,
@@ -23,26 +32,31 @@ class OrderWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        expected_statuses = [
-            "payment_confirmed",
-            "confirmed",
-            "preparing",
-            "ready",
-            "assigned",
-            "picked_up",
-            "delivered",
-            "completed",
-        ]
+        # ---------------------------------------------------
+        # Wait until order is completed
+        # ---------------------------------------------------
 
-        for expected_status in expected_statuses:
+        await workflow.wait_condition(
+            lambda: self.current_status == "completed"
+        )
 
-            await workflow.wait_condition(
-                lambda expected=expected_status:
-                expected in self.status_history
-            )
-
-        return f"Order {order_id} workflow completed"
+        return (
+            f"Order {order_id} workflow completed"
+        )
 
     @workflow.signal
     async def update_status(self, status: str):
-        self.status_history.append(status)
+
+        # Update Temporal state
+        self.current_status = status
+
+        # Update PostgreSQL through an Activity
+        await workflow.wait_condition(
+            lambda: self.current_status == "completed"
+        )
+
+        await workflow.wait_condition(
+            workflow.all_handlers_finished
+        )
+
+        return f"Order {order_id} workflow completed"
