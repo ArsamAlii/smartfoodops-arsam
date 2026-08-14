@@ -51,28 +51,20 @@ class OrderWorkflow:
                 self.current_status
             )
 
-            # 4. Reject invalid transition
             if new_status != expected_status:
-                raise ValueError(
-                    f"Invalid order status transition: "
-                    f"'{self.current_status}' -> '{new_status}'. "
-                    f"Expected '{expected_status}'."
-                )
+                continue
 
-            # 5. Update PostgreSQL through activity
             await workflow.execute_activity(
                 update_order_status,
                 args=[order_id, new_status],
                 start_to_close_timeout=timedelta(seconds=30),
             )
 
-            # 6. Only update workflow state after DB succeeds
             self.current_status = new_status
-
-        # 7. Wait for signal handlers
-        await workflow.wait_condition(
-            workflow.all_handlers_finished
-        )
+                    # 7. Wait for signal handlers
+                    await workflow.wait_condition(
+                        workflow.all_handlers_finished
+                    )
 
         return f"Order {order_id} workflow completed"
 

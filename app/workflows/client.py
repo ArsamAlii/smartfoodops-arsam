@@ -8,7 +8,7 @@ from app.workflows.order_workflow import OrderWorkflow
 async def main():
     client = await Client.connect("localhost:7233")
 
-    workflow_id = "order-workflow-validation-test-2"
+    workflow_id = "order-workflow-queue-test-1"
 
     handle = await client.start_workflow(
         OrderWorkflow.run,
