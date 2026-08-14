@@ -51,20 +51,24 @@ class OrderWorkflow:
                 self.current_status
             )
 
+            # Ignore invalid transitions
             if new_status != expected_status:
                 continue
 
+            # Update PostgreSQL through activity
             await workflow.execute_activity(
                 update_order_status,
                 args=[order_id, new_status],
                 start_to_close_timeout=timedelta(seconds=30),
             )
 
+            # Only update workflow state after DB succeeds
             self.current_status = new_status
-                    # 7. Wait for signal handlers
-                    await workflow.wait_condition(
-                        workflow.all_handlers_finished
-                    )
+
+        # 4. Wait for signal handlers to finish
+        await workflow.wait_condition(
+            workflow.all_handlers_finished
+        )
 
         return f"Order {order_id} workflow completed"
 
