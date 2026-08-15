@@ -18,7 +18,7 @@ from app.schemas.order import (
 
 from app.services.order_service import create_order
 
-
+from app.services.temporal_service import start_order_workflow
 router = APIRouter(
     prefix="/orders",
     tags=["Orders"],
@@ -62,7 +62,7 @@ ALLOWED_STATUS_TRANSITIONS = {
     response_model=OrderResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_new_order(
+async def create_new_order(
     order_data: OrderCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -78,6 +78,8 @@ def create_new_order(
             order_data=order_data,
             idempotency_key=idempotency_key,
         )
+
+        await start_order_workflow(order.order_id)
 
         return order
 
