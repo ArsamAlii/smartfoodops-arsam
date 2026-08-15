@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.orm import Session
 
@@ -7,7 +9,6 @@ from app.api.dependencies import get_current_user
 from app.models.users import User
 from app.models.enums import UserRole
 from app.models.order import Order
-from app.models.order_status_history import OrderStatusHistory
 from app.models.restaurant import Restaurant
 
 from app.schemas.order import (
@@ -18,45 +19,54 @@ from app.schemas.order import (
 
 from app.services.order_service import create_order
 
-from app.services.temporal_service import start_order_workflow
+from app.workflows.temporal_client import (
+    start_order_workflow,
+    signal_order_workflow,
+)
+
+
 router = APIRouter(
     prefix="/orders",
     tags=["Orders"],
 )
 
-from fastapi import Header
+
 # ===========================================================
 # Allowed Order Status Transitions
 # ===========================================================
 
 ALLOWED_STATUS_TRANSITIONS = {
-    "restaurant_admin": {
-        "placed": {"confirmed", "rejected", "cancelled"},
-        "confirmed": {"preparing", "cancelled"},
+    "admin": {
+        "placed": {"payment_confirmed"},
+        "payment_confirmed": {"confirmed"},
+        "confirmed": {"preparing"},
         "preparing": {"ready"},
         "ready": {"assigned"},
-    },
-    "rider": {
         "assigned": {"picked_up"},
         "picked_up": {"delivered"},
         "delivered": {"completed"},
     },
 
-    "admin": {
-        "placed": {"payment_confirmed", "confirmed", "rejected", "cancelled"},
-        "payment_confirmed": {"confirmed", "rejected", "cancelled"},
-        "confirmed": {"preparing", "cancelled"},
-        "preparing": {"ready", "cancelled"},
+    "restaurant_admin": {
+        "placed": {"payment_confirmed"},
+        "payment_confirmed": {"confirmed"},
+        "confirmed": {"preparing"},
+        "preparing": {"ready"},
         "ready": {"assigned"},
+    },
+
+    "rider": {
         "assigned": {"picked_up"},
         "picked_up": {"delivered"},
         "delivered": {"completed"},
     },
 }
 
+
 # ===========================================================
 # Create Order
 # ===========================================================
+
 @router.post(
     "/",
     response_model=OrderResponse,
@@ -72,6 +82,10 @@ async def create_new_order(
     ),
 ):
     try:
+        # ---------------------------------------------------
+        # Create order in PostgreSQL
+        # ---------------------------------------------------
+
         order = create_order(
             db=db,
             customer_id=current_user.user_id,
@@ -79,7 +93,21 @@ async def create_new_order(
             idempotency_key=idempotency_key,
         )
 
-        await start_order_workflow(order.order_id)
+        # ---------------------------------------------------
+        # Start Temporal workflow
+        # ---------------------------------------------------
+        #
+        # start_order_workflow() creates its own Temporal
+        # client internally.
+        #
+        # Workflow ID:
+        # order-workflow-{order_id}
+        #
+        # ---------------------------------------------------
+
+        await start_order_workflow(
+            order_id=order.order_id,
+        )
 
         return order
 
@@ -88,8 +116,10 @@ async def create_new_order(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
+
+
 # ===========================================================
-# Get My / Accessible Orders
+# Get Orders
 # ===========================================================
 
 @router.get(
@@ -128,7 +158,7 @@ def get_orders(
         )
 
     # -------------------------------------------------------
-    # Rider → only assigned orders
+    # Rider → only orders assigned to them
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RIDER:
@@ -142,7 +172,7 @@ def get_orders(
         )
 
     # -------------------------------------------------------
-    # Restaurant Admin → restaurant orders
+    # Restaurant Admin → only their restaurant's orders
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RESTAURANT_ADMIN:
@@ -158,7 +188,7 @@ def get_orders(
         if restaurant is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Restaurant not found",
+                detail="Restaurant not found.",
             )
 
         return (
@@ -170,6 +200,10 @@ def get_orders(
             .order_by(Order.created_at.desc())
             .all()
         )
+
+    # -------------------------------------------------------
+    # Unknown/unsupported role
+    # -------------------------------------------------------
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -190,6 +224,10 @@ def get_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # -------------------------------------------------------
+    # Find order
+    # -------------------------------------------------------
+
     order = (
         db.query(Order)
         .filter(
@@ -201,7 +239,7 @@ def get_order(
     if order is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found",
+            detail="Order not found.",
         )
 
     # -------------------------------------------------------
@@ -212,7 +250,7 @@ def get_order(
         return order
 
     # -------------------------------------------------------
-    # Customer → own orders only
+    # Customer → only their own orders
     # -------------------------------------------------------
 
     if current_user.role == UserRole.CUSTOMER:
@@ -229,7 +267,7 @@ def get_order(
         return order
 
     # -------------------------------------------------------
-    # Rider → assigned orders only
+    # Rider → only assigned orders
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RIDER:
@@ -246,7 +284,7 @@ def get_order(
         return order
 
     # -------------------------------------------------------
-    # Restaurant Admin → restaurant orders only
+    # Restaurant Admin → only their restaurant's orders
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RESTAURANT_ADMIN:
@@ -272,6 +310,10 @@ def get_order(
 
         return order
 
+    # -------------------------------------------------------
+    # Unknown/unsupported role
+    # -------------------------------------------------------
+
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=(
@@ -289,7 +331,7 @@ def get_order(
     "/{order_id}",
     response_model=OrderResponse,
 )
-def update_order(
+async def update_order(
     order_id: int,
     order_data: OrderUpdate,
     db: Session = Depends(get_db),
@@ -310,19 +352,24 @@ def update_order(
     if order is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found",
+            detail="Order not found.",
         )
 
+    # =======================================================
+    # ROLE-BASED ACCESS
+    # =======================================================
+
     # -------------------------------------------------------
-    # Check Role-Based Access
+    # Admin → can update any order
     # -------------------------------------------------------
 
-    # Admin can update any order
     if current_user.role == UserRole.ADMIN:
         pass
 
-    # Restaurant Admin can update orders
-    # belonging to their restaurant
+    # -------------------------------------------------------
+    # Restaurant Admin → only their restaurant's orders
+    # -------------------------------------------------------
+
     elif current_user.role == UserRole.RESTAURANT_ADMIN:
 
         restaurant = (
@@ -344,7 +391,10 @@ def update_order(
                 ),
             )
 
-    # Rider can update only orders assigned to them
+    # -------------------------------------------------------
+    # Rider → only orders assigned to them
+    # -------------------------------------------------------
+
     elif current_user.role == UserRole.RIDER:
 
         if order.rider_id != current_user.user_id:
@@ -356,7 +406,10 @@ def update_order(
                 ),
             )
 
-    # Customers cannot update orders
+    # -------------------------------------------------------
+    # Customer → cannot update orders
+    # -------------------------------------------------------
+
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -367,7 +420,7 @@ def update_order(
         )
 
     # =======================================================
-    # Update Status
+    # STATUS UPDATE
     # =======================================================
 
     if order_data.status is not None:
@@ -382,13 +435,11 @@ def update_order(
         if old_status == new_status:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Order is already in this status."
-                ),
+                detail="Order is already in this status.",
             )
 
         # ---------------------------------------------------
-        # Get allowed transitions for role
+        # Get allowed transitions for this role
         # ---------------------------------------------------
 
         role_name = current_user.role.value
@@ -400,12 +451,12 @@ def update_order(
         )
 
         # ---------------------------------------------------
-        # Validate transition
+        # Reject illegal transition
         # ---------------------------------------------------
 
         if new_status not in allowed_transitions:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     f"Cannot change order status "
                     f"from '{old_status}' "
@@ -414,50 +465,77 @@ def update_order(
             )
 
         # ---------------------------------------------------
-        # Update Order
+        # Send signal to Temporal
         # ---------------------------------------------------
 
-        order.status = new_status
+        try:
+            await signal_order_workflow(
+                order_id=order.order_id,
+                status=new_status,
+            )
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Unable to communicate with Temporal: "
+                    f"{exc}"
+                ),
+            )
+
         # ---------------------------------------------------
-        # Release rider when order is completed/cancelled
+        # Wait for Temporal Activity to update PostgreSQL
+        # ---------------------------------------------------
+        #
+        # The Temporal signal is asynchronous.
+        #
+        # The signal being accepted does NOT necessarily
+        # mean that the Activity has already completed.
+        #
+        # We therefore check PostgreSQL until the expected
+        # status appears.
+        #
+        # Maximum wait:
+        # 20 attempts × 0.25 seconds = 5 seconds
+        #
         # ---------------------------------------------------
 
-        if new_status in {"completed", "cancelled"}:
+        status_updated = False
 
-            if order.rider_id is not None:
+        for _ in range(20):
 
-                rider = (
-                    db.query(User)
-                    .filter(
-                        User.user_id == order.rider_id,
-                        User.role == UserRole.RIDER,
-                    )
-                    .with_for_update()
-                    .first()
-                )
+            # Refresh the object from PostgreSQL
+            db.refresh(order)
 
-                if rider is not None:
-                    rider.is_available = True
+            if order.status == new_status:
+                status_updated = True
+                break
+
+            await asyncio.sleep(0.25)
+
         # ---------------------------------------------------
-        # Create Status History
+        # Temporal accepted the signal but the Activity
+        # did not update PostgreSQL within the timeout.
         # ---------------------------------------------------
 
-        status_history = OrderStatusHistory(
-            order_id=order.order_id,
-            from_status=old_status,
-            to_status=new_status,
-        )
-
-        db.add(status_history)
+        if not status_updated:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Temporal accepted the order status "
+                    "update, but the database was not "
+                    "updated within 5 seconds."
+                ),
+            )
 
     # =======================================================
-    # Update Rider
+    # RIDER ASSIGNMENT
     # =======================================================
 
     if order_data.rider_id is not None:
 
         # ---------------------------------------------------
-        # Only admin or restaurant admin can assign riders
+        # Only Admin / Restaurant Admin can assign riders
         # ---------------------------------------------------
 
         if current_user.role not in (
@@ -473,7 +551,33 @@ def update_order(
             )
 
         # ---------------------------------------------------
-        # Verify rider exists
+        # Restaurant Admin must belong to this restaurant
+        # ---------------------------------------------------
+
+        if current_user.role == UserRole.RESTAURANT_ADMIN:
+
+            restaurant = (
+                db.query(Restaurant)
+                .filter(
+                    Restaurant.user_id
+                    == current_user.user_id,
+                    Restaurant.restaurant_id
+                    == order.restaurant_id,
+                )
+                .first()
+            )
+
+            if restaurant is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "You do not have permission "
+                        "to assign a rider to this order."
+                    ),
+                )
+
+        # ---------------------------------------------------
+        # Verify rider exists and lock rider row
         # ---------------------------------------------------
 
         rider = (
@@ -485,6 +589,7 @@ def update_order(
             .with_for_update()
             .first()
         )
+
         if rider is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -492,17 +597,7 @@ def update_order(
             )
 
         # ---------------------------------------------------
-        # Verify user is actually a rider
-        # ---------------------------------------------------
-
-        # if rider.role != UserRole.RIDER:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail="Selected user is not a rider.",
-        #     )
-
-        # ---------------------------------------------------
-        # Verify rider is available
+        # Check rider availability
         # ---------------------------------------------------
 
         if not rider.is_available:
@@ -514,19 +609,25 @@ def update_order(
         # ---------------------------------------------------
         # Assign rider
         # ---------------------------------------------------
+
         order.rider_id = rider.user_id
         rider.is_available = False
 
+        # ---------------------------------------------------
+        # Commit rider assignment
+        # ---------------------------------------------------
+
+        try:
+            db.commit()
+
+        except Exception:
+            db.rollback()
+            raise
+
+        db.refresh(order)
 
     # =======================================================
-    # Commit
-    # =======================================================
-
-    db.commit()
-
-
-    # =======================================================
-    # Refresh
+    # Final Refresh
     # =======================================================
 
     db.refresh(order)

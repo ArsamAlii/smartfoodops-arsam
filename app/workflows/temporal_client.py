@@ -1,5 +1,3 @@
-import asyncio
-
 from temporalio.client import Client
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -23,9 +21,10 @@ async def get_temporal_client() -> Client:
 # ===========================================================
 
 async def start_order_workflow(
-    client: Client,
     order_id: int,
 ):
+    client = await get_temporal_client()
+
     workflow_id = f"order-workflow-{order_id}"
 
     try:
@@ -70,7 +69,6 @@ async def signal_order_workflow(
         workflow_id
     )
 
-    # Verify that the workflow actually exists
     description = await handle.describe()
 
     print(
@@ -79,7 +77,6 @@ async def signal_order_workflow(
         f"status={description.status}"
     )
 
-    # Send signal to the workflow
     await handle.signal(
         OrderWorkflow.update_status,
         status,
@@ -89,54 +86,3 @@ async def signal_order_workflow(
         f"Temporal signal sent: "
         f"{status} -> {workflow_id}"
     )
-
-
-# ===========================================================
-# Manual Testing
-# ===========================================================
-
-async def main():
-
-    client = await get_temporal_client()
-
-    order_id = 10
-
-    handle = await start_order_workflow(
-        client=client,
-        order_id=order_id,
-    )
-
-    statuses = [
-        "payment_confirmed",
-        "confirmed",
-        "preparing",
-        "ready",
-        "assigned",
-        "picked_up",
-        "delivered",
-        "completed",
-    ]
-
-    for status in statuses:
-
-        await signal_order_workflow(
-            order_id=order_id,
-            status=status,
-        )
-
-        await asyncio.sleep(1)
-
-    result = await handle.result()
-
-    print(
-        "Workflow result:",
-        result,
-    )
-
-
-# ===========================================================
-# Run Manual Test
-# ===========================================================
-
-if __name__ == "__main__":
-    asyncio.run(main())

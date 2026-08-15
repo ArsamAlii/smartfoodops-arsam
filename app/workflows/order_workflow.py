@@ -13,20 +13,26 @@ with workflow.unsafe.imports_passed_through():
 class OrderWorkflow:
 
     def __init__(self):
-        self.current_status = "placed"
+        self.current_status = None
         self.requested_statuses = []
 
     @workflow.run
     async def run(self, order_id: int) -> str:
 
-        # 1. Verify that the order exists
-        await workflow.execute_activity(
+        # ---------------------------------------------------
+        # 1. Get actual order status from PostgreSQL
+        # ---------------------------------------------------
+
+        self.current_status = await workflow.execute_activity(
             validate_order_workflow,
             order_id,
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        # 2. Allowed order status transitions
+        # ---------------------------------------------------
+        # 2. Allowed Temporal transitions
+        # ---------------------------------------------------
+
         allowed_transitions = {
             "placed": "payment_confirmed",
             "payment_confirmed": "confirmed",
@@ -38,7 +44,10 @@ class OrderWorkflow:
             "delivered": "completed",
         }
 
-        # 3. Process status changes
+        # ---------------------------------------------------
+        # 3. Process requested status changes
+        # ---------------------------------------------------
+
         while self.current_status != "completed":
 
             await workflow.wait_condition(
@@ -51,21 +60,37 @@ class OrderWorkflow:
                 self.current_status
             )
 
-            # Ignore invalid transitions
+            # ------------------------------------------------
+            # Ignore invalid signals
+            # ------------------------------------------------
+
             if new_status != expected_status:
                 continue
 
-            # Update PostgreSQL through activity
+            # ------------------------------------------------
+            # Update PostgreSQL through Temporal Activity
+            # ------------------------------------------------
+
             await workflow.execute_activity(
                 update_order_status,
-                args=[order_id, new_status],
+                args=[
+                    order_id,
+                    self.current_status,
+                    new_status,
+                ],
                 start_to_close_timeout=timedelta(seconds=30),
             )
 
+            # ------------------------------------------------
             # Only update workflow state after DB succeeds
+            # ------------------------------------------------
+
             self.current_status = new_status
 
+        # ---------------------------------------------------
         # 4. Wait for signal handlers to finish
+        # ---------------------------------------------------
+
         await workflow.wait_condition(
             workflow.all_handlers_finished
         )

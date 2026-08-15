@@ -1,4 +1,5 @@
 from temporalio import activity
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import SessionLocal
 from app.models.order import Order
@@ -14,17 +15,14 @@ async def validate_order_workflow(order_id: int) -> str:
             db.query(Order)
             .filter(Order.order_id == order_id)
             .first()
-        )#Find the order
+        )
 
         if order is None:
             raise ValueError(
                 f"Order {order_id} not found"
             )
 
-        return (
-            f"Order {order.order_id} exists "
-            f"with status '{order.status}'"
-        )
+        return order.status
 
     finally:
         db.close()
@@ -33,15 +31,21 @@ async def validate_order_workflow(order_id: int) -> str:
 @activity.defn
 async def update_order_status(
     order_id: int,
+    expected_status: str,
     new_status: str,
 ) -> str:
+
     db = SessionLocal()
 
     try:
-        # Find the order
+        # ---------------------------------------------------
+        # Find order
+        # ---------------------------------------------------
+
         order = (
             db.query(Order)
             .filter(Order.order_id == order_id)
+            .with_for_update()
             .first()
         )
 
@@ -50,13 +54,29 @@ async def update_order_status(
                 f"Order {order_id} not found"
             )
 
-        # Remember the previous status
+        # ---------------------------------------------------
+        # Verify database state
+        # ---------------------------------------------------
+
+        if order.status != expected_status:
+            raise ValueError(
+                f"Order {order_id} is currently "
+                f"'{order.status}', expected "
+                f"'{expected_status}'"
+            )
+
         old_status = order.status
 
-        # Update order
+        # ---------------------------------------------------
+        # Update status
+        # ---------------------------------------------------
+
         order.status = new_status
 
-        # Record status history
+        # ---------------------------------------------------
+        # Create status history
+        # ---------------------------------------------------
+
         status_history = OrderStatusHistory(
             order_id=order.order_id,
             from_status=old_status,
@@ -65,10 +85,12 @@ async def update_order_status(
 
         db.add(status_history)
 
-        # Save both changes
+        # ---------------------------------------------------
+        # Commit atomically
+        # ---------------------------------------------------
+
         db.commit()
 
-        # Refresh order from database
         db.refresh(order)
 
         return (
