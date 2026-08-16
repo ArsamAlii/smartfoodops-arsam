@@ -10,20 +10,31 @@ from app.workflows.activities.order_activities import (
 )
 
 
+TEMPORAL_SERVER = "localhost:7233"
+TASK_QUEUE = "smartfoodops-task-queue"
+
+
 async def main():
-    client = await Client.connect("localhost:7233")
+    client = await Client.connect(
+        TEMPORAL_SERVER
+    )
 
     worker = Worker(
         client,
-        task_queue="smartfoodops-task-queue",
-        workflows=[OrderWorkflow],
+        task_queue=TASK_QUEUE,
+        workflows=[
+            OrderWorkflow,
+        ],
         activities=[
             validate_order_workflow,
             update_order_status,
         ],
     )
 
-    print("Temporal worker started...")
+    print(
+        "Temporal worker started..."
+    )
+
     await worker.run()
 
 

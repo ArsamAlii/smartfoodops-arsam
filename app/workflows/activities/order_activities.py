@@ -1,19 +1,31 @@
 from temporalio import activity
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import SessionLocal
 from app.models.order import Order
 from app.models.order_status_history import OrderStatusHistory
 
 
+# ===========================================================
+# Validate Order
+# ===========================================================
+
 @activity.defn
-async def validate_order_workflow(order_id: int) -> str:
+async def validate_order_workflow(
+    order_id: int,
+) -> str:
+
+    print(
+        f"Activity: validating order {order_id}"
+    )
+
     db = SessionLocal()
 
     try:
         order = (
             db.query(Order)
-            .filter(Order.order_id == order_id)
+            .filter(
+                Order.order_id == order_id
+            )
             .first()
         )
 
@@ -22,11 +34,20 @@ async def validate_order_workflow(order_id: int) -> str:
                 f"Order {order_id} not found"
             )
 
+        print(
+            f"Activity: order {order_id} "
+            f"current status = '{order.status}'"
+        )
+
         return order.status
 
     finally:
         db.close()
 
+
+# ===========================================================
+# Update Order Status
+# ===========================================================
 
 @activity.defn
 async def update_order_status(
@@ -35,16 +56,25 @@ async def update_order_status(
     new_status: str,
 ) -> str:
 
+    print(
+        f"Activity: updating order {order_id} "
+        f"from '{expected_status}' "
+        f"to '{new_status}'"
+    )
+
     db = SessionLocal()
 
     try:
+
         # ---------------------------------------------------
         # Find order
         # ---------------------------------------------------
 
         order = (
             db.query(Order)
-            .filter(Order.order_id == order_id)
+            .filter(
+                Order.order_id == order_id
+            )
             .with_for_update()
             .first()
         )
@@ -91,11 +121,21 @@ async def update_order_status(
 
         db.commit()
 
+        # ---------------------------------------------------
+        # Refresh order
+        # ---------------------------------------------------
+
         db.refresh(order)
+
+        print(
+            f"Activity completed: order {order_id} "
+            f"is now '{order.status}'"
+        )
 
         return (
             f"Order {order_id} status changed "
-            f"from '{old_status}' to '{new_status}'"
+            f"from '{old_status}' "
+            f"to '{new_status}'"
         )
 
     except Exception:
