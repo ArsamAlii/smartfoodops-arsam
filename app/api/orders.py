@@ -34,12 +34,11 @@ router = APIRouter(
 # ===========================================================
 # Allowed Order Status Transitions
 # ===========================================================
-
 ALLOWED_STATUS_TRANSITIONS = {
     "admin": {
-        "placed": {"payment_confirmed"},
-        "payment_confirmed": {"confirmed"},
-        "confirmed": {"preparing"},
+        "placed": {"payment_confirmed", "cancelled"},
+        "payment_confirmed": {"confirmed", "cancelled"},
+        "confirmed": {"preparing", "cancelled"},
         "preparing": {"ready"},
         "ready": {"assigned"},
         "assigned": {"picked_up"},
@@ -48,9 +47,9 @@ ALLOWED_STATUS_TRANSITIONS = {
     },
 
     "restaurant_admin": {
-        "placed": {"payment_confirmed"},
-        "payment_confirmed": {"confirmed"},
-        "confirmed": {"preparing"},
+        "placed": {"payment_confirmed", "rejected"},
+        "payment_confirmed": {"confirmed", "rejected"},
+        "confirmed": {"preparing", "rejected"},
         "preparing": {"ready"},
         "ready": {"assigned"},
     },
@@ -59,6 +58,12 @@ ALLOWED_STATUS_TRANSITIONS = {
         "assigned": {"picked_up"},
         "picked_up": {"delivered"},
         "delivered": {"completed"},
+    },
+
+    "customer": {
+        "placed": {"cancelled"},
+        "payment_confirmed": {"cancelled"},
+        "confirmed": {"cancelled"},
     },
 }
 
@@ -359,16 +364,9 @@ async def update_order(
     # ROLE-BASED ACCESS
     # =======================================================
 
-    # -------------------------------------------------------
-    # Admin → can update any order
-    # -------------------------------------------------------
-
     if current_user.role == UserRole.ADMIN:
+        # Admin can update any order.
         pass
-
-    # -------------------------------------------------------
-    # Restaurant Admin → only their restaurant's orders
-    # -------------------------------------------------------
 
     elif current_user.role == UserRole.RESTAURANT_ADMIN:
 
@@ -376,8 +374,7 @@ async def update_order(
             db.query(Restaurant)
             .filter(
                 Restaurant.user_id == current_user.user_id,
-                Restaurant.restaurant_id
-                == order.restaurant_id,
+                Restaurant.restaurant_id == order.restaurant_id,
             )
             .first()
         )
@@ -391,10 +388,6 @@ async def update_order(
                 ),
             )
 
-    # -------------------------------------------------------
-    # Rider → only orders assigned to them
-    # -------------------------------------------------------
-
     elif current_user.role == UserRole.RIDER:
 
         if order.rider_id != current_user.user_id:
@@ -406,19 +399,42 @@ async def update_order(
                 ),
             )
 
-    # -------------------------------------------------------
-    # Customer → cannot update orders
-    # -------------------------------------------------------
+    elif current_user.role == UserRole.CUSTOMER:
+
+        # ---------------------------------------------------
+        # Customer can ONLY cancel their own order.
+        # ---------------------------------------------------
+
+        if order.customer_id != current_user.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "You can only cancel your own orders."
+                ),
+            )
+
+        if order_data.status is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Customers can only request "
+                    "order cancellation."
+                ),
+            )
+
+        if order_data.status.value != "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Customers can only cancel orders."
+                ),
+            )
 
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "You do not have permission "
-                "to update orders."
-            ),
+            detail="You do not have permission to update orders.",
         )
-
     # =======================================================
     # STATUS UPDATE
     # =======================================================
