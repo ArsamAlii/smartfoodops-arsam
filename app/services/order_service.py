@@ -15,7 +15,10 @@ from app.services.payment.payment_authorizer import (
     PaymentAuthorizer,
     PaymentAuthorizationError,
 )
-
+from app.services.redis_service import (
+    get_idempotency_key,
+    set_idempotency_key,
+)
 def create_order(
     db: Session,
     customer_id: int,
@@ -26,7 +29,6 @@ def create_order(
     # -------------------------------------------------------
     # 1. Get Idempotency Key TTL
     # -------------------------------------------------------
-
     ttl_seconds = int(
         os.getenv(
             "IDEMPOTENCY_KEY_TTL_SECONDS",
@@ -37,9 +39,33 @@ def create_order(
     now = datetime.utcnow()
 
     # -------------------------------------------------------
-    # 2. Check Existing Idempotency Key
+    # 2. Check Redis Idempotency Key
     # -------------------------------------------------------
+    redis_order_id = get_idempotency_key(
+        customer_id=customer_id,
+        idempotency_key=idempotency_key,
+    )
 
+    if redis_order_id:
+
+        existing_order = (
+            db.query(Order)
+            .options(
+                joinedload(Order.payment),
+                joinedload(Order.items),
+            )
+            .filter(
+                Order.order_id == int(redis_order_id)
+            )
+            .first()
+        )
+
+        if existing_order:
+            return existing_order
+
+    # -------------------------------------------------------
+    # 3. Check PostgreSQL Idempotency Key
+    # -------------------------------------------------------
     existing_key = (
         db.query(IdempotencyKey)
         .filter(
@@ -50,9 +76,8 @@ def create_order(
     )
 
     # -------------------------------------------------------
-    # 3. Return Existing Order If Key Is Still Valid
+    # 4. Return Existing Order If Key Is Still Valid
     # -------------------------------------------------------
-
     if existing_key:
 
         if existing_key.expires_at > now:
@@ -72,7 +97,6 @@ def create_order(
             if existing_order:
                 return existing_order
 
-        # Existing key has expired
         db.delete(existing_key)
         db.flush()
 
@@ -336,6 +360,17 @@ def create_order(
 
         db.commit()
 
+        try:
+            set_idempotency_key(
+                customer_id=customer_id,
+                idempotency_key=idempotency_key,
+                order_id=order.order_id,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception as exc:
+            print(
+                f"Warning: failed to store idempotency key in Redis: {exc}"
+            )
         # ===================================================
         # 14. Reload Order
         # ===================================================
