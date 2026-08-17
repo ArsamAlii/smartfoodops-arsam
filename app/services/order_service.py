@@ -16,7 +16,6 @@ from app.services.payment.payment_authorizer import (
     PaymentAuthorizationError,
 )
 
-
 def create_order(
     db: Session,
     customer_id: int,
@@ -27,6 +26,7 @@ def create_order(
     # -------------------------------------------------------
     # 1. Get Idempotency Key TTL
     # -------------------------------------------------------
+
     ttl_seconds = int(
         os.getenv(
             "IDEMPOTENCY_KEY_TTL_SECONDS",
@@ -39,6 +39,7 @@ def create_order(
     # -------------------------------------------------------
     # 2. Check Existing Idempotency Key
     # -------------------------------------------------------
+
     existing_key = (
         db.query(IdempotencyKey)
         .filter(
@@ -51,6 +52,7 @@ def create_order(
     # -------------------------------------------------------
     # 3. Return Existing Order If Key Is Still Valid
     # -------------------------------------------------------
+
     if existing_key:
 
         if existing_key.expires_at > now:
@@ -76,9 +78,10 @@ def create_order(
 
     try:
 
-        # ---------------------------------------------------
-        # 4. Verify Restaurant Exists
-        # ---------------------------------------------------
+        # ===================================================
+        # 4. Verify Restaurant
+        # ===================================================
+
         restaurant = (
             db.query(Restaurant)
             .filter(
@@ -91,32 +94,28 @@ def create_order(
         if not restaurant:
             raise ValueError("Restaurant not found")
 
-        # ---------------------------------------------------
-        # 5. Verify Restaurant Is Open
-        # ---------------------------------------------------
         if not restaurant.is_open:
             raise ValueError(
                 "Restaurant is currently closed"
             )
 
-        # ---------------------------------------------------
-        # 6. Create Order
-        # ---------------------------------------------------
-        order = Order(
-            customer_id=customer_id,
-            restaurant_id=order_data.restaurant_id,
-            status="placed",
-            total_amount=Decimal("0.00"),
-        )
+        # ===================================================
+        # 5. VALIDATE ALL ITEMS FIRST
+        # ===================================================
+        #
+        # IMPORTANT:
+        #
+        # Do NOT create the Order yet.
+        # Do NOT decrease stock yet.
+        #
+        # We first inspect every requested item and collect
+        # every validation error.
+        #
+        # ===================================================
 
-        db.add(order)
-        db.flush()
+        validation_errors = []
+        validated_items = []
 
-        total_amount = Decimal("0.00")
-
-        # ---------------------------------------------------
-        # 7. Process Order Items
-        # ---------------------------------------------------
         for item_data in order_data.items:
 
             menu_item = (
@@ -130,48 +129,125 @@ def create_order(
             )
 
             # ------------------------------------------------
-            # 8. Verify Menu Item Exists
+            # Item does not exist
             # ------------------------------------------------
+
             if not menu_item:
-                raise ValueError(
+
+                validation_errors.append(
                     f"Menu item "
                     f"{item_data.menu_item_id} not found"
                 )
 
+                continue
+
             # ------------------------------------------------
-            # 9. Verify Item Belongs To Restaurant
+            # Item belongs to another restaurant
             # ------------------------------------------------
+
             if (
                 menu_item.category.restaurant_id
                 != order_data.restaurant_id
             ):
-                raise ValueError(
+
+                validation_errors.append(
                     f"Menu item "
                     f"{item_data.menu_item_id} "
                     "does not belong to this restaurant"
                 )
 
+                continue
+
             # ------------------------------------------------
-            # 10. Verify Availability
+            # Item unavailable
             # ------------------------------------------------
+
             if not menu_item.is_available:
-                raise ValueError(
+
+                validation_errors.append(
                     f"Menu item '{menu_item.name}' "
                     "is unavailable"
                 )
 
-            # ------------------------------------------------
-            # 11. Verify Stock
-            # ------------------------------------------------
-            if menu_item.stock < item_data.quantity:
-                raise ValueError(
-                    f"Insufficient stock for "
-                    f"'{menu_item.name}'"
-                )
+                continue
 
             # ------------------------------------------------
-            # 12. Server-Side Price
+            # Invalid quantity
             # ------------------------------------------------
+
+            if item_data.quantity <= 0:
+
+                validation_errors.append(
+                    f"Invalid quantity for "
+                    f"'{menu_item.name}'. "
+                    "Quantity must be greater than zero."
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # Insufficient stock
+            # ------------------------------------------------
+
+            if menu_item.stock < item_data.quantity:
+
+                validation_errors.append(
+                    f"Insufficient stock for "
+                    f"'{menu_item.name}'. "
+                    f"Available: {menu_item.stock}, "
+                    f"requested: {item_data.quantity}"
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # Everything is valid
+            # ------------------------------------------------
+
+            validated_items.append(
+                (
+                    item_data,
+                    menu_item,
+                )
+            )
+
+        # ===================================================
+        # 6. Return ALL Validation Errors At Once
+        # ===================================================
+
+        if validation_errors:
+
+            raise ValueError(
+                "Order validation failed: "
+                + " | ".join(validation_errors)
+            )
+
+        # ===================================================
+        # 7. Create Order
+        # ===================================================
+
+        order = Order(
+            customer_id=customer_id,
+            restaurant_id=order_data.restaurant_id,
+            status="placed",
+            total_amount=Decimal("0.00"),
+        )
+
+        db.add(order)
+        db.flush()
+
+        total_amount = Decimal("0.00")
+
+        # ===================================================
+        # 8. Process Validated Items
+        # ===================================================
+
+        for item_data, menu_item in validated_items:
+
+            # ------------------------------------------------
+            # Server-side price
+            # ------------------------------------------------
+
             unit_price = menu_item.price
 
             item_total = (
@@ -181,8 +257,9 @@ def create_order(
             total_amount += item_total
 
             # ------------------------------------------------
-            # 13. Create Order Item
+            # Create Order Item
             # ------------------------------------------------
+
             order_item = OrderItem(
                 order_id=order.order_id,
                 menu_item_id=menu_item.menu_item_id,
@@ -193,21 +270,25 @@ def create_order(
             db.add(order_item)
 
             # ------------------------------------------------
-            # 14. Reserve Stock
+            # Reserve Stock
             # ------------------------------------------------
+
             menu_item.stock -= item_data.quantity
 
-        # ---------------------------------------------------
-        # 15. Set Order Total
-        # ---------------------------------------------------
+        # ===================================================
+        # 9. Set Server-Side Order Total
+        # ===================================================
+
         order.total_amount = total_amount
 
-        # ---------------------------------------------------
-        # 16. Authorize Payment
-        # ---------------------------------------------------
+        # ===================================================
+        # 10. Authorize Payment
+        # ===================================================
+
         authorizer = PaymentAuthorizer(db)
 
         try:
+
             authorizer.authorize(
                 order=order,
                 idempotency_key=idempotency_key,
@@ -218,15 +299,13 @@ def create_order(
 
         except PaymentAuthorizationError as exc:
 
-            # Payment failed.
-            # Because the entire operation is inside the
-            # same transaction, the order and stock changes
-            # will be rolled back below.
+            # Entire transaction is rolled back below.
             raise ValueError(str(exc))
 
-        # ---------------------------------------------------
-        # 17. Create Initial Status History
-        # ---------------------------------------------------
+        # ===================================================
+        # 11. Initial Status History
+        # ===================================================
+
         status_history = OrderStatusHistory(
             order_id=order.order_id,
             from_status="",
@@ -235,9 +314,10 @@ def create_order(
 
         db.add(status_history)
 
-        # ---------------------------------------------------
-        # 18. Save Idempotency Record
-        # ---------------------------------------------------
+        # ===================================================
+        # 12. Save Idempotency Record
+        # ===================================================
+
         idempotency_record = IdempotencyKey(
             key=idempotency_key,
             customer_id=customer_id,
@@ -250,14 +330,16 @@ def create_order(
 
         db.add(idempotency_record)
 
-        # ---------------------------------------------------
-        # 19. Commit Everything Atomically
-        # ---------------------------------------------------
+        # ===================================================
+        # 13. Commit Everything Atomically
+        # ===================================================
+
         db.commit()
 
-        # ---------------------------------------------------
-        # 20. Reload Order With Relationships
-        # ---------------------------------------------------
+        # ===================================================
+        # 14. Reload Order
+        # ===================================================
+
         order = (
             db.query(Order)
             .options(
@@ -273,8 +355,10 @@ def create_order(
         return order
 
     except Exception:
+
         # ---------------------------------------------------
-        # Rollback Entire Transaction
+        # Rollback EVERYTHING
         # ---------------------------------------------------
+
         db.rollback()
         raise
