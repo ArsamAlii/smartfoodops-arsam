@@ -18,6 +18,9 @@ celery_app = Celery(
     "smartfoodops",
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
+    include=[
+        "app.workers.tasks.test_tasks",
+    ],
 )
 
 
