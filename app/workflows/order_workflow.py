@@ -140,6 +140,7 @@ class OrderWorkflow:
                     args=[
                         order_id,
                         self.current_status,
+                        new_status,
                     ],
                     start_to_close_timeout=timedelta(
                         seconds=30
@@ -258,3 +259,4 @@ class OrderWorkflow:
         self.requested_statuses.append(
             status
         )
+

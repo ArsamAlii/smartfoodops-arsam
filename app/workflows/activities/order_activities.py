@@ -152,9 +152,8 @@ async def update_order_status(
 
         db.close()
 
-
 # ===========================================================
-# Cancel Order
+# Cancel / Reject Order
 # Refund Payment + Release Stock
 # ===========================================================
 
@@ -162,11 +161,13 @@ async def update_order_status(
 async def cancel_order(
     order_id: int,
     expected_status: str,
+    new_status: str,
 ) -> str:
 
     print(
-        f"Activity: cancelling order {order_id} "
-        f"from '{expected_status}'"
+        f"Activity: processing order {order_id} "
+        f"from '{expected_status}' "
+        f"to '{new_status}'"
     )
 
     db = SessionLocal()
@@ -195,16 +196,19 @@ async def cancel_order(
         # Idempotency
         # ---------------------------------------------------
 
-        if order.status == "cancelled":
+        if order.status in {
+            "cancelled",
+            "rejected",
+        }:
 
             print(
                 f"Activity: order {order_id} "
-                f"is already cancelled"
+                f"is already '{order.status}'"
             )
 
             return (
                 f"Order {order_id} "
-                f"was already cancelled"
+                f"is already '{order.status}'"
             )
 
         # ---------------------------------------------------
@@ -217,6 +221,20 @@ async def cancel_order(
                 f"Order {order_id} is currently "
                 f"'{order.status}', expected "
                 f"'{expected_status}'"
+            )
+
+        # ---------------------------------------------------
+        # Validate requested final status
+        # ---------------------------------------------------
+
+        if new_status not in {
+            "cancelled",
+            "rejected",
+        }:
+
+            raise ValueError(
+                f"Invalid cancellation status: "
+                f"'{new_status}'"
             )
 
         old_status = order.status
@@ -308,7 +326,7 @@ async def cancel_order(
         # 3. Change Order Status
         # ===================================================
 
-        order.status = "cancelled"
+        order.status = new_status
 
         # ===================================================
         # 4. Create Status History
@@ -317,7 +335,7 @@ async def cancel_order(
         status_history = OrderStatusHistory(
             order_id=order.order_id,
             from_status=old_status,
-            to_status="cancelled",
+            to_status=new_status,
         )
 
         db.add(status_history)
@@ -332,11 +350,13 @@ async def cancel_order(
 
         print(
             f"Activity completed: order {order_id} "
-            f"is now 'cancelled'"
+            f"is now '{order.status}'"
         )
 
         return (
-            f"Order {order_id} cancelled. "
+            f"Order {order_id} changed "
+            f"from '{old_status}' "
+            f"to '{new_status}'. "
             f"Payment refunded and stock released."
         )
 
