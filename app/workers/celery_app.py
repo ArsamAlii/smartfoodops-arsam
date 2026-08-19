@@ -20,6 +20,7 @@ celery_app = Celery(
     backend=CELERY_RESULT_BACKEND,
     include=[
         "app.workers.tasks.test_tasks",
+        "app.workers.tasks.analytics_tasks",
     ],
 )
 
@@ -30,4 +31,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+
+    beat_schedule={
+        "analytics-rollup-every-minute": {
+            "task": "app.workers.tasks.analytics_tasks.analytics_rollup",
+            "schedule": 60.0,
+        },
+    },
 )
