@@ -21,6 +21,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.test_tasks",
         "app.workers.tasks.analytics_tasks",
+        "app.workers.tasks.retry_tasks",
     ],
 )
 
