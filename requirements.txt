@@ -22,3 +22,5 @@ temporalio
 
 celery[redis]
 redis
+
+psycopg[binary]

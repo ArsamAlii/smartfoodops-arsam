@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -9,8 +9,8 @@ from app.db.base import Base
 class FailedJob(Base):
     __tablename__ = "failed_jobs"
 
-    task_id: Mapped[int] = mapped_column(
-        Integer,
+    task_id: Mapped[str] = mapped_column(
+        String(255),
         primary_key=True,
         index=True,
     )
