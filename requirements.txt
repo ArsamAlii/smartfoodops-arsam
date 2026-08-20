@@ -1,26 +1,19 @@
-fastapi #creats rest api
-uvicorn[standard] #webserver that runs fst api
-
-sqlalchemy # lets you write sql as python obj
-alembic #tracks db changes
-
-pydantic #validates requests
-pydantic-settings #reads values fom .env instead of hardcoding
-
-passlib[bcrypt] #hashes password
-python-jose[cryptography] #proves who the costumer is 
-
-python-multipart #need for forms and login endpoints
-
-pytest #to test
-httpx #lets test make requests to fastapi
-
-black #auto format code
-ruff #check for mistake and style issues
-
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+pydantic
+pydantic-settings
+email-validator
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+pytest
+httpx
+black
+ruff
 temporalio
-
 celery[redis]
 redis
-
 psycopg[binary]
+pgvector
