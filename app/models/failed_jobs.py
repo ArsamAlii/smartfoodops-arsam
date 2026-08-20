@@ -9,7 +9,7 @@ from app.db.base import Base
 class FailedJob(Base):
     __tablename__ = "failed_jobs"
 
-    id: Mapped[int] = mapped_column(
+    task_id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
         index=True,
