@@ -38,3 +38,5 @@ psycopg[binary]
 pgvector
 prometheus-client
 python-json-logger
+
+kafka-python
