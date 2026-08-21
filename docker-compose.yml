@@ -273,7 +273,25 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
+  consumer:
+    build: .
+    container_name: app-kafka-consumer
+    command: python -m app.events.consumer
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    profiles: ["week3"]
+    restart: unless-stopped
   temporal-worker:
     build:
       context: .
