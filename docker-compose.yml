@@ -26,13 +26,13 @@
 # ---------------------------------------------------------------------------
 # Hostnames: FROM INSIDE a container   vs.   FROM YOUR LAPTOP
 #
-#   Postgres    postgres:5432                 localhost:5432
-#   Redis       redis:6379                    localhost:6379
-#   Temporal    temporal:7233                 localhost:7233
-#   Kafka       kafka:9092                    localhost:29092
-#   Prometheus  prometheus:9090               localhost:9090
-#   Kafka UI    -                             localhost:8080
-#   Temporal UI -                             localhost:8233
+#   Postgres    postgres:5432                localhost:5432
+#   Redis       redis:6379                   localhost:6379
+#   Temporal    temporal:7233                localhost:7233
+#   Kafka       kafka:9092                   localhost:29092
+#   Prometheus  prometheus:9090              localhost:9090
+#   Kafka UI    -                            localhost:8080
+#   Temporal UI -                            localhost:8233
 #
 # If a connection fails, this table is the first thing to check. Using
 # `localhost` from inside a container is the single most common mistake.
@@ -124,7 +124,7 @@ services:
   # defaults - fine for this assignment, not for production.
   #
   # Two listeners exist on purpose:
-  #   PLAINTEXT      (kafka:9092)      for other containers
+  #   PLAINTEXT      (kafka:9092)        for other containers
   #   PLAINTEXT_HOST (localhost:29092) for your laptop / a local script
   # A broker advertises the address clients should use to reach it, which is
   # why one physical broker needs two advertised addresses here.
@@ -231,7 +231,9 @@ services:
   api:
     build: .
     container_name: app-api
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
     env_file:
       - .env
     environment:
@@ -255,6 +257,8 @@ services:
     build: .
     container_name: app-celery-worker
     command: celery -A app.workers.celery_app:celery_app worker --loglevel=info
+    volumes:
+      - .:/app
     env_file:
       - .env
     environment:
@@ -269,6 +273,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
   temporal-worker:
     build:
       context: .
@@ -278,6 +283,8 @@ services:
       - python
       - -m
       - app.workflows.worker
+    volumes:
+      - .:/app
     depends_on:
       temporal:
         condition: service_started
@@ -289,10 +296,13 @@ services:
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: app-workflow
     restart: unless-stopped
+
   beat:
     build: .
     container_name: app-celery-beat
     command: celery -A app.workers.celery_app:celery_app beat --loglevel=info
+    volumes:
+      - .:/app
     env_file:
       - .env
     environment:
@@ -303,6 +313,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
