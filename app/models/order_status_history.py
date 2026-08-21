@@ -53,3 +53,6 @@ class OrderStatusHistory(Base):
         "Order",
         back_populates="status_history",
     )
+
+    actor: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -12,7 +12,8 @@ class MenuItemBase(BaseModel):
     name: str
     description: str | None = None
     price: Decimal = Field(gt=0)
-    stock: int = 0
+    stock: int | None = Field(default=None, ge=0)
+    order_index: int = Field(default=0, ge=0)
     image_url: str | None = None
     is_available: bool = True
 
@@ -33,7 +34,8 @@ class MenuItemUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     price: Decimal | None = Field(default=None, gt=0)
-    stock: int | None = None
+    stock: int | None = Field(default=None, ge=0)
+    order_index: int | None = Field(default=None, ge=0)
     image_url: str | None = None
     is_available: bool | None = None
 

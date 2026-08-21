@@ -29,6 +29,7 @@ def create_menu_item(
         description=item_data.description,
         price=item_data.price,
         stock=item_data.stock,
+        order_index=item_data.order_index,
         image_url=item_data.image_url,
         is_available=item_data.is_available,
     )
@@ -51,6 +52,7 @@ def get_menu_items_by_category(
     return (
         db.query(MenuItem)
         .filter(MenuItem.category_id == category_id)
+        .order_by(MenuItem.order_index, MenuItem.menu_item_id)
         .all()
     )
 
@@ -95,6 +97,9 @@ def update_menu_item(
 
     if item_data.stock is not None:
         menu_item.stock = item_data.stock
+
+    if item_data.order_index is not None:
+        menu_item.order_index = item_data.order_index
 
     if item_data.image_url is not None:
         menu_item.image_url = item_data.image_url

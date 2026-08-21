@@ -1,24 +1,30 @@
 import asyncio
+import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
 
 from app.workflows.order_workflow import OrderWorkflow
-
 from app.workflows.activities.order_activities import (
     validate_order_workflow,
     update_order_status,
     cancel_order,
+    assign_rider,
 )
 
 
-TEMPORAL_SERVER = "localhost:7233"
+TEMPORAL_SERVER = os.getenv(
+    "TEMPORAL_HOST",
+    "localhost:7233",
+)
 
-TASK_QUEUE = "smartfoodops-task-queue"
+TASK_QUEUE = os.getenv(
+    "TEMPORAL_TASK_QUEUE",
+    "smartfoodops-task-queue",
+)
 
 
 async def main():
-
     print("Connecting to Temporal...")
 
     client = await Client.connect(
@@ -37,18 +43,13 @@ async def main():
             validate_order_workflow,
             update_order_status,
             cancel_order,
+            assign_rider,
         ],
     )
 
     print("Temporal worker started...")
-
-    print(
-        f"Task queue: {TASK_QUEUE}"
-    )
-
-    print(
-        "Waiting for workflow/activity tasks..."
-    )
+    print(f"Task queue: {TASK_QUEUE}")
+    print("Waiting for workflow/activity tasks...")
 
     await worker.run()
 

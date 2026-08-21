@@ -269,7 +269,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-temporal-worker
+    command:
+      - python
+      - -m
+      - app.workflows.worker
+    depends_on:
+      temporal:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: app-workflow
+    restart: unless-stopped
   beat:
     build: .
     container_name: app-celery-beat

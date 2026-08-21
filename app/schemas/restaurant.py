@@ -7,6 +7,8 @@ class RestaurantBase(BaseModel):
     name: str
     cuisine: str
     address: str
+    description: str | None = None
+    operating_hours: str | None = None
 
 
 class RestaurantCreate(RestaurantBase):
@@ -17,6 +19,8 @@ class RestaurantUpdate(BaseModel):
     name: str | None = None
     cuisine: str | None = None
     address: str | None = None
+    description: str | None = None
+    operating_hours: str | None = None
     is_open: bool | None = None
 
 

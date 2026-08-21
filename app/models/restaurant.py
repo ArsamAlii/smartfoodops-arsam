@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey,String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped,mapped_column, relationship
 
 from app.db.base import Base
@@ -19,6 +19,8 @@ class Restaurant(Base):
         nullable=False,
     )
 
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     cuisine: Mapped[str] = mapped_column(
         String(50),
     )
@@ -27,6 +29,8 @@ class Restaurant(Base):
         String(255),
         nullable=False,
     )
+
+    operating_hours: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     is_open: Mapped[bool] = mapped_column(
         Boolean,

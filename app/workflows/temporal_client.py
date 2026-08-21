@@ -1,11 +1,20 @@
+import os
+
 from temporalio.client import Client
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from app.workflows.order_workflow import OrderWorkflow
 
 
-TEMPORAL_SERVER = "localhost:7233"
-TASK_QUEUE = "smartfoodops-task-queue"
+TEMPORAL_SERVER = os.getenv(
+    "TEMPORAL_HOST",
+    "localhost:7233",
+)
+
+TASK_QUEUE = os.getenv(
+    "TEMPORAL_TASK_QUEUE",
+    "smartfoodops-task-queue",
+)
 
 
 # ===========================================================

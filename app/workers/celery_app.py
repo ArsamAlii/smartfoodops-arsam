@@ -19,7 +19,7 @@ celery_app = Celery(
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
     include=[
-        "app.workers.tasks.test_tasks",
+        "app.workers.tasks.basic_tasks",
         "app.workers.tasks.analytics_tasks",
         "app.workers.tasks.retry_tasks",
     ],
@@ -37,6 +37,10 @@ celery_app.conf.update(
         "analytics-rollup-every-minute": {
             "task": "app.workers.tasks.analytics_tasks.analytics_rollup",
             "schedule": 60.0,
+        },
+        "rider-requeue-every-30-seconds": {
+            "task": "app.workers.tasks.analytics_tasks.requeue_waiting_orders",
+            "schedule": 30.0,
         },
     },
 )

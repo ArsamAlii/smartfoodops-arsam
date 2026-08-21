@@ -213,7 +213,10 @@ def create_order(
             # Insufficient stock
             # ------------------------------------------------
 
-            if menu_item.stock < item_data.quantity:
+            if (
+                menu_item.stock is not None
+                and menu_item.stock < item_data.quantity
+            ):
 
                 validation_errors.append(
                     f"Insufficient stock for "
@@ -297,7 +300,8 @@ def create_order(
             # Reserve Stock
             # ------------------------------------------------
 
-            menu_item.stock -= item_data.quantity
+            if menu_item.stock is not None:
+                menu_item.stock -= item_data.quantity
 
         # ===================================================
         # 9. Set Server-Side Order Total
@@ -334,6 +338,8 @@ def create_order(
             order_id=order.order_id,
             from_status="",
             to_status="placed",
+            actor="customer",
+            reason="Order submitted",
         )
 
         db.add(status_history)

@@ -48,7 +48,10 @@ class MenuItem(Base):
         nullable=False,
     )
 
-    stock: Mapped[int] = mapped_column(
+    # ``None`` represents an unlimited item; zero represents sold out.
+    stock: Mapped[int | None] = mapped_column(nullable=True)
+
+    order_index: Mapped[int] = mapped_column(
         default=0,
         nullable=False,
     )

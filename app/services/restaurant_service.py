@@ -38,6 +38,8 @@ def create_restaurant(
         name=restaurant_data.name,
         cuisine=restaurant_data.cuisine,
         address=restaurant_data.address,
+        description=restaurant_data.description,
+        operating_hours=restaurant_data.operating_hours,
     )
 
     db.add(restaurant)
@@ -47,14 +49,20 @@ def create_restaurant(
     return restaurant
 
 
-def get_restaurants(
-    db: Session,
-):
+def get_restaurants(db: Session, *, cuisine: str | None = None, search: str | None = None,
+                    open_now: bool = True, offset: int = 0, limit: int = 20):
     """
     Return all restaurants.
     """
 
-    return db.query(Restaurant).all()
+    query = db.query(Restaurant)
+    if open_now:
+        query = query.filter(Restaurant.is_open.is_(True))
+    if cuisine:
+        query = query.filter(Restaurant.cuisine.ilike(f"%{cuisine}%"))
+    if search:
+        query = query.filter(Restaurant.name.ilike(f"%{search}%"))
+    return query.order_by(Restaurant.name).offset(offset).limit(limit).all()
 
 
 def get_restaurant(

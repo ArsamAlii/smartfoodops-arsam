@@ -23,6 +23,7 @@ from app.workflows.temporal_client import (
     start_order_workflow,
     signal_order_workflow,
 )
+from app.core.observability import ORDERS_PLACED
 
 
 router = APIRouter(
@@ -34,6 +35,7 @@ router = APIRouter(
 # ===========================================================
 # Allowed Order Status Transitions
 # ===========================================================
+
 ALLOWED_STATUS_TRANSITIONS = {
     "admin": {
         "placed": {"payment_confirmed", "cancelled"},
@@ -75,7 +77,7 @@ ALLOWED_STATUS_TRANSITIONS = {
 @router.post(
     "/",
     response_model=OrderResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_new_order(
     order_data: OrderCreate,
@@ -87,10 +89,11 @@ async def create_new_order(
     ),
 ):
     try:
-        # ---------------------------------------------------
-        # Create order in PostgreSQL
-        # ---------------------------------------------------
-
+        if current_user.role != UserRole.CUSTOMER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only customers can place orders.",
+            )
         order = create_order(
             db=db,
             customer_id=current_user.user_id,
@@ -98,21 +101,11 @@ async def create_new_order(
             idempotency_key=idempotency_key,
         )
 
-        # ---------------------------------------------------
-        # Start Temporal workflow
-        # ---------------------------------------------------
-        #
-        # start_order_workflow() creates its own Temporal
-        # client internally.
-        #
-        # Workflow ID:
-        # order-workflow-{order_id}
-        #
-        # ---------------------------------------------------
-
         await start_order_workflow(
             order_id=order.order_id,
         )
+
+        ORDERS_PLACED.inc()
 
         return order
 
@@ -177,7 +170,7 @@ def get_orders(
         )
 
     # -------------------------------------------------------
-    # Restaurant Admin → only their restaurant's orders
+    # Restaurant Admin → restaurant orders
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RESTAURANT_ADMIN:
@@ -206,10 +199,6 @@ def get_orders(
             .all()
         )
 
-    # -------------------------------------------------------
-    # Unknown/unsupported role
-    # -------------------------------------------------------
-
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You do not have permission to view orders.",
@@ -229,10 +218,6 @@ def get_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # -------------------------------------------------------
-    # Find order
-    # -------------------------------------------------------
-
     order = (
         db.query(Order)
         .filter(
@@ -248,14 +233,14 @@ def get_order(
         )
 
     # -------------------------------------------------------
-    # Admin → can view any order
+    # Admin
     # -------------------------------------------------------
 
     if current_user.role == UserRole.ADMIN:
         return order
 
     # -------------------------------------------------------
-    # Customer → only their own orders
+    # Customer
     # -------------------------------------------------------
 
     if current_user.role == UserRole.CUSTOMER:
@@ -272,7 +257,7 @@ def get_order(
         return order
 
     # -------------------------------------------------------
-    # Rider → only assigned orders
+    # Rider
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RIDER:
@@ -289,7 +274,7 @@ def get_order(
         return order
 
     # -------------------------------------------------------
-    # Restaurant Admin → only their restaurant's orders
+    # Restaurant Admin
     # -------------------------------------------------------
 
     if current_user.role == UserRole.RESTAURANT_ADMIN:
@@ -315,10 +300,6 @@ def get_order(
 
         return order
 
-    # -------------------------------------------------------
-    # Unknown/unsupported role
-    # -------------------------------------------------------
-
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=(
@@ -342,9 +323,9 @@ async def update_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # -------------------------------------------------------
+    # =======================================================
     # Find Order
-    # -------------------------------------------------------
+    # =======================================================
 
     order = (
         db.query(Order)
@@ -365,7 +346,6 @@ async def update_order(
     # =======================================================
 
     if current_user.role == UserRole.ADMIN:
-        # Admin can update any order.
         pass
 
     elif current_user.role == UserRole.RESTAURANT_ADMIN:
@@ -374,7 +354,8 @@ async def update_order(
             db.query(Restaurant)
             .filter(
                 Restaurant.user_id == current_user.user_id,
-                Restaurant.restaurant_id == order.restaurant_id,
+                Restaurant.restaurant_id
+                == order.restaurant_id,
             )
             .first()
         )
@@ -400,10 +381,6 @@ async def update_order(
             )
 
     elif current_user.role == UserRole.CUSTOMER:
-
-        # ---------------------------------------------------
-        # Customer can ONLY cancel their own order.
-        # ---------------------------------------------------
 
         if order.customer_id != current_user.user_id:
             raise HTTPException(
@@ -435,6 +412,155 @@ async def update_order(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to update orders.",
         )
+
+    # =======================================================
+    # RIDER ASSIGNMENT
+    #
+    # IMPORTANT:
+    #
+    # Rider assignment happens BEFORE the order is allowed
+    # to move to "assigned".
+    #
+    # ready
+    #   ↓
+    # rider assigned
+    #   ↓
+    # assigned
+    #
+    # =======================================================
+
+    if order_data.rider_id is not None:
+
+        # ---------------------------------------------------
+        # Only Admin / Restaurant Admin
+        # ---------------------------------------------------
+
+        if current_user.role not in (
+            UserRole.ADMIN,
+            UserRole.RESTAURANT_ADMIN,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Only admin or restaurant admin "
+                    "can assign riders."
+                ),
+            )
+
+        # ---------------------------------------------------
+        # Restaurant Admin ownership check
+        # ---------------------------------------------------
+
+        if current_user.role == UserRole.RESTAURANT_ADMIN:
+
+            restaurant = (
+                db.query(Restaurant)
+                .filter(
+                    Restaurant.user_id == current_user.user_id,
+                    Restaurant.restaurant_id
+                    == order.restaurant_id,
+                )
+                .first()
+            )
+
+            if restaurant is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "You do not have permission "
+                        "to assign a rider to this order."
+                    ),
+                )
+
+        # ---------------------------------------------------
+        # Cannot assign a rider to a completed/cancelled order
+        # ---------------------------------------------------
+
+        if order.status != "ready":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A rider can only be assigned while an order is READY.",
+            )
+
+        if order.status in {
+            "cancelled",
+            "rejected",
+            "completed",
+            "delivered",
+            "picked_up",
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Cannot assign a rider when order "
+                    f"is '{order.status}'."
+                ),
+            )
+
+        # ---------------------------------------------------
+        # Find and lock rider
+        # ---------------------------------------------------
+
+        rider = (
+            db.query(User)
+            .filter(
+                User.user_id == order_data.rider_id,
+                User.role == UserRole.RIDER,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if rider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Rider not found.",
+            )
+
+        # ---------------------------------------------------
+        # Rider must be available
+        # ---------------------------------------------------
+
+        if not rider.is_available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected rider is not available.",
+            )
+
+        # ---------------------------------------------------
+        # If another rider is already assigned
+        # ---------------------------------------------------
+
+        if (
+            order.rider_id is not None
+            and order.rider_id != rider.user_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A different rider is already assigned "
+                    "to this order."
+                ),
+            )
+
+        # ---------------------------------------------------
+        # Assign rider
+        # ---------------------------------------------------
+
+        order.rider_id = rider.user_id
+
+        # Rider becomes unavailable while carrying order
+        rider.is_available = False
+
+        try:
+            db.commit()
+
+        except Exception:
+            db.rollback()
+            raise
+
+        db.refresh(order)
+
     # =======================================================
     # STATUS UPDATE
     # =======================================================
@@ -454,8 +580,48 @@ async def update_order(
                 detail="Order is already in this status.",
             )
 
+        # ===================================================
+        # CRITICAL RIDER CHECK
+        #
+        # An order CANNOT become "assigned" unless it already
+        # has a rider.
+        # ===================================================
+
+        if new_status == "assigned":
+
+            if order.rider_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Cannot set order status to "
+                        "'assigned' because no rider "
+                        "has been assigned. "
+                        "Assign a rider first."
+                    ),
+                )
+
         # ---------------------------------------------------
-        # Get allowed transitions for this role
+        # Rider cannot be removed while assigned
+        # ---------------------------------------------------
+
+        if (
+            new_status in {
+                "assigned",
+                "picked_up",
+                "delivered",
+            }
+            and order.rider_id is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Order cannot move to '{new_status}' "
+                    "without an assigned rider."
+                ),
+            )
+
+        # ---------------------------------------------------
+        # Get allowed transitions
         # ---------------------------------------------------
 
         role_name = current_user.role.value
@@ -480,17 +646,19 @@ async def update_order(
                 ),
             )
 
-        # ---------------------------------------------------
-        # Send signal to Temporal
-        # ---------------------------------------------------
+        # ===================================================
+        # SIGNAL TEMPORAL
+        # ===================================================
 
         try:
+
             await signal_order_workflow(
                 order_id=order.order_id,
                 status=new_status,
             )
 
         except Exception as exc:
+
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=(
@@ -499,42 +667,33 @@ async def update_order(
                 ),
             )
 
-        # ---------------------------------------------------
-        # Wait for Temporal Activity to update PostgreSQL
-        # ---------------------------------------------------
-        #
-        # The Temporal signal is asynchronous.
-        #
-        # The signal being accepted does NOT necessarily
-        # mean that the Activity has already completed.
-        #
-        # We therefore check PostgreSQL until the expected
-        # status appears.
-        #
-        # Maximum wait:
-        # 20 attempts × 0.25 seconds = 5 seconds
-        #
-        # ---------------------------------------------------
+        # ===================================================
+        # WAIT FOR TEMPORAL ACTIVITY
+        # ===================================================
 
         status_updated = False
 
         for _ in range(20):
 
-            # Refresh the object from PostgreSQL
             db.refresh(order)
 
-            if order.status == new_status:
+            # READY may immediately advance to ASSIGNED when dispatch finds an
+            # available rider, so both states acknowledge a successful READY
+            # signal.
+            if order.status == new_status or (
+                new_status == "ready" and order.status == "assigned"
+            ):
                 status_updated = True
                 break
 
             await asyncio.sleep(0.25)
 
         # ---------------------------------------------------
-        # Temporal accepted the signal but the Activity
-        # did not update PostgreSQL within the timeout.
+        # Timeout
         # ---------------------------------------------------
 
         if not status_updated:
+
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail=(
@@ -545,107 +704,29 @@ async def update_order(
             )
 
     # =======================================================
-    # RIDER ASSIGNMENT
-    # =======================================================
-
-    if order_data.rider_id is not None:
-
-        # ---------------------------------------------------
-        # Only Admin / Restaurant Admin can assign riders
-        # ---------------------------------------------------
-
-        if current_user.role not in (
-            UserRole.ADMIN,
-            UserRole.RESTAURANT_ADMIN,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Only admin or restaurant admin "
-                    "can assign riders."
-                ),
-            )
-
-        # ---------------------------------------------------
-        # Restaurant Admin must belong to this restaurant
-        # ---------------------------------------------------
-
-        if current_user.role == UserRole.RESTAURANT_ADMIN:
-
-            restaurant = (
-                db.query(Restaurant)
-                .filter(
-                    Restaurant.user_id
-                    == current_user.user_id,
-                    Restaurant.restaurant_id
-                    == order.restaurant_id,
-                )
-                .first()
-            )
-
-            if restaurant is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=(
-                        "You do not have permission "
-                        "to assign a rider to this order."
-                    ),
-                )
-
-        # ---------------------------------------------------
-        # Verify rider exists and lock rider row
-        # ---------------------------------------------------
-
-        rider = (
-            db.query(User)
-            .filter(
-                User.user_id == order_data.rider_id,
-                User.role == UserRole.RIDER,
-            )
-            .with_for_update()
-            .first()
-        )
-
-        if rider is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Rider not found.",
-            )
-
-        # ---------------------------------------------------
-        # Check rider availability
-        # ---------------------------------------------------
-
-        if not rider.is_available:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Selected rider is not available.",
-            )
-
-        # ---------------------------------------------------
-        # Assign rider
-        # ---------------------------------------------------
-
-        order.rider_id = rider.user_id
-        rider.is_available = False
-
-        # ---------------------------------------------------
-        # Commit rider assignment
-        # ---------------------------------------------------
-
-        try:
-            db.commit()
-
-        except Exception:
-            db.rollback()
-            raise
-
-        db.refresh(order)
-
-    # =======================================================
-    # Final Refresh
+    # FINAL VALIDATION
     # =======================================================
 
     db.refresh(order)
+
+    # -------------------------------------------------------
+    # Safety check:
+    #
+    # assigned/picked_up/delivered must ALWAYS have rider.
+    # -------------------------------------------------------
+
+    if order.status in {
+        "assigned",
+        "picked_up",
+        "delivered",
+    } and order.rider_id is None:
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Data integrity error: order is in "
+                f"'{order.status}' status but has no rider."
+            ),
+        )
 
     return order

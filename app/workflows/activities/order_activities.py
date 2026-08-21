@@ -9,6 +9,9 @@ from app.models.menu_item import MenuItem
 from app.models.order_status_history import (
     OrderStatusHistory,
 )
+from app.models.refund import Refund
+from app.models.settlement import Settlement
+from app.services.rider_assignment_service import assign_available_rider
 
 
 # ===========================================================
@@ -120,7 +123,15 @@ async def update_order_status(
             order_id=order.order_id,
             from_status=old_status,
             to_status=new_status,
+            actor="workflow",
         )
+
+        if new_status == "completed" and not db.query(Settlement).filter(Settlement.order_id == order_id).first():
+            db.add(Settlement(
+                order_id=order_id,
+                restaurant_amount=order.total_amount,
+                rider_amount=0,
+            ))
 
         db.add(status_history)
 
@@ -271,7 +282,8 @@ async def cancel_order(
                     f"not found while releasing stock"
                 )
 
-            menu_item.stock += order_item.quantity
+            if menu_item.stock is not None:
+                menu_item.stock += order_item.quantity
 
             print(
                 f"Activity: released "
@@ -298,6 +310,12 @@ async def cancel_order(
             if payment.payment_status == "authorized":
 
                 payment.payment_status = "refunded"
+
+                db.add(Refund(
+                    payment_id=payment.payment_id,
+                    amount=payment.final_amount,
+                    reason=new_status,
+                ))
 
                 print(
                     f"Activity: payment "
@@ -336,6 +354,8 @@ async def cancel_order(
             order_id=order.order_id,
             from_status=old_status,
             to_status=new_status,
+            actor="workflow",
+            reason=new_status,
         )
 
         db.add(status_history)
@@ -367,4 +387,17 @@ async def cancel_order(
 
     finally:
 
+        db.close()
+
+
+@activity.defn
+async def assign_rider(order_id: int) -> int | None:
+    """Dispatch is retry-safe because an already assigned order is returned."""
+    db = SessionLocal()
+    try:
+        return assign_available_rider(db, order_id)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
         db.close()

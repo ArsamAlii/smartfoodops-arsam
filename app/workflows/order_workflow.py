@@ -9,6 +9,7 @@ with workflow.unsafe.imports_passed_through():
         validate_order_workflow,
         update_order_status,
         cancel_order,
+        assign_rider,
     )
 
 
@@ -46,6 +47,17 @@ class OrderWorkflow:
             f"Order {order_id} workflow started "
             f"with status '{self.current_status}'"
         )
+
+        # Order creation has already made an idempotent payment-authorisation
+        # record. Project that durable result through the workflow before
+        # waiting for the restaurant's accept/reject signal.
+        if self.current_status == "placed":
+            await workflow.execute_activity(
+                update_order_status,
+                args=[order_id, "placed", "payment_confirmed"],
+                start_to_close_timeout=timedelta(seconds=30),
+            )
+            self.current_status = "payment_confirmed"
 
         # ---------------------------------------------------
         # 2. Normal order transitions
@@ -217,6 +229,15 @@ class OrderWorkflow:
             # -------------------------------------------------
 
             self.current_status = new_status
+
+            if new_status == "ready":
+                rider_id = await workflow.execute_activity(
+                    assign_rider,
+                    order_id,
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+                if rider_id is not None:
+                    self.current_status = "assigned"
 
             workflow.logger.info(
                 f"Order {order_id}: "
