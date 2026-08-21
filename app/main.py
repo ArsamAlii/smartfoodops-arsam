@@ -23,6 +23,7 @@ import app.models.content_chunk
 import app.models.refund
 import app.models.settlement
 import app.models.notification
+import app.models.processed_event
 # -------------------------------------------------------
 # API Routers
 # -------------------------------------------------------

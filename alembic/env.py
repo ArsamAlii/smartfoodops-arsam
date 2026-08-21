@@ -7,8 +7,10 @@ from alembic import context
 
 from app.db.base import Base
 from app.db.database import DATABASE_URL
-import app.models
 
+# Explicitly import models so Base.metadata detects them
+from app.models.notification import Notification
+from app.models.processed_event import ProcessedEvent
 
 config = context.config
 
