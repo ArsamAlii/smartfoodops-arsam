@@ -21,21 +21,15 @@ def analytics_rollup():
         today_string = today.isoformat()
 
         # ---------------------------------------------------
-        # Total orders created today
+        # Order aggregates
         # ---------------------------------------------------
 
         total_orders = (
             db.query(func.count(Order.order_id))
-            .filter(
-                func.date(Order.created_at) == today
-            )
+            .filter(func.date(Order.created_at) == today)
             .scalar()
             or 0
         )
-
-        # ---------------------------------------------------
-        # Completed orders
-        # ---------------------------------------------------
 
         completed_orders = (
             db.query(func.count(Order.order_id))
@@ -47,10 +41,6 @@ def analytics_rollup():
             or 0
         )
 
-        # ---------------------------------------------------
-        # Cancelled orders
-        # ---------------------------------------------------
-
         cancelled_orders = (
             db.query(func.count(Order.order_id))
             .filter(
@@ -61,17 +51,8 @@ def analytics_rollup():
             or 0
         )
 
-        # ---------------------------------------------------
-        # Revenue from completed orders
-        # ---------------------------------------------------
-
         total_revenue = (
-            db.query(
-                func.coalesce(
-                    func.sum(Order.total_amount),
-                    0,
-                )
-            )
+            db.query(func.coalesce(func.sum(Order.total_amount), 0))
             .filter(
                 func.date(Order.created_at) == today,
                 Order.status == "completed",
@@ -80,10 +61,6 @@ def analytics_rollup():
             or 0
         )
 
-        # ---------------------------------------------------
-        # Average order value
-        # ---------------------------------------------------
-
         average_order_value = (
             total_revenue / completed_orders
             if completed_orders
@@ -91,19 +68,17 @@ def analytics_rollup():
         )
 
         # ---------------------------------------------------
-        # Failed jobs / failed events
+        # Failed events
         # ---------------------------------------------------
 
         failed_events = (
-            db.query(
-                func.count(FailedJob.task_id)
-            )
+            db.query(func.count(FailedJob.task_id))
             .scalar()
             or 0
         )
 
         # ---------------------------------------------------
-        # Find existing daily aggregate
+        # Upsert daily aggregate
         # ---------------------------------------------------
 
         analytics = (
@@ -114,19 +89,11 @@ def analytics_rollup():
             .first()
         )
 
-        # ---------------------------------------------------
-        # Create aggregate if it doesn't exist
-        # ---------------------------------------------------
-
         if analytics is None:
             analytics = AnalyticsDaily(
                 analytics_date=today_string
             )
             db.add(analytics)
-
-        # ---------------------------------------------------
-        # Update aggregate
-        # ---------------------------------------------------
 
         analytics.total_orders = total_orders
         analytics.completed_orders = completed_orders
@@ -155,9 +122,7 @@ def analytics_rollup():
             "completed_orders": completed_orders,
             "cancelled_orders": cancelled_orders,
             "total_revenue": float(total_revenue),
-            "average_order_value": float(
-                average_order_value
-            ),
+            "average_order_value": float(average_order_value),
             "failed_events": failed_events,
         }
 
@@ -187,10 +152,7 @@ def requeue_waiting_orders(self):
         assigned = 0
 
         for order_id in order_ids:
-            if assign_available_rider(
-                db,
-                order_id,
-            ) is not None:
+            if assign_available_rider(db, order_id) is not None:
                 assigned += 1
 
         return {
