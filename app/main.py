@@ -24,6 +24,7 @@ import app.models.refund
 import app.models.settlement
 import app.models.notification
 import app.models.processed_event
+import app.models.analytics
 # -------------------------------------------------------
 # API Routers
 # -------------------------------------------------------
@@ -37,7 +38,7 @@ from app.api.failed_jobs import router as failed_jobs_router
 from app.api.celery import router as celery_router
 from app.core.observability import CorrelationAndMetricsMiddleware, configure_logging
 from app.db.database import SessionLocal
-
+from app.api.analytics import router as analytics_router
 # Base.metadata.create_all(bind=engine)
 
 
@@ -78,7 +79,7 @@ app.include_router(payments_router)
 app.include_router(users_router)
 app.include_router(failed_jobs_router)
 app.include_router(celery_router)
-
+app.include_router(analytics_router)
 # -------------------------------------------------------
 # Root
 # -------------------------------------------------------
