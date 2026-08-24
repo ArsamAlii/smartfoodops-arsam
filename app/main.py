@@ -39,6 +39,7 @@ from app.api.celery import router as celery_router
 from app.core.observability import CorrelationAndMetricsMiddleware, configure_logging
 from app.db.database import SessionLocal
 from app.api.analytics import router as analytics_router
+
 # Base.metadata.create_all(bind=engine)
 
 
