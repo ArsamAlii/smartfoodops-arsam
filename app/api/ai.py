@@ -9,7 +9,7 @@ from app.db.database import get_db
 from app.models.restaurant import Restaurant
 from app.models.menu_item import MenuItem
 from app.models.users import User
-
+import os
 from app.schemas.ai import (
     AIAskRequest,
     AIAskResponse,
@@ -44,11 +44,19 @@ def ask_ai(
     # 1. Semantic search
     # ---------------------------------------------------------
 
+    retrieval_top_k = int(
+        os.getenv("RETRIEVAL_TOP_K", "5")
+    )
+
+    retrieval_min_similarity = float(
+        os.getenv("RETRIEVAL_MIN_SIMILARITY", "0.30")
+    )
+
     results = search_content_chunks(
         db=db,
         query=request.question,
-        limit=request.limit,
-        similarity_threshold=request.similarity_threshold,
+        limit=retrieval_top_k,
+        similarity_threshold=retrieval_min_similarity,
     )
 
     # ---------------------------------------------------------
