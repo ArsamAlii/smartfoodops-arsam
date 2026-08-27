@@ -6,8 +6,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.content_chunk import ContentChunk
 from app.models.menu_category import MenuCategory
 from app.models.restaurant import Restaurant
-from app.services.embedding_service import generate_embedding
 
+from app.services.embedding_service import generate_embedding
+from app.workers.embedding_tasks import embed_content_chunk_task
+
+
+# ---------------------------------------------------------
+# Build Menu Item Text
+# ---------------------------------------------------------
 def build_menu_item_text(
     restaurant: Restaurant,
     category: MenuCategory,
@@ -34,11 +40,15 @@ def build_menu_item_text(
     return ". ".join(parts)
 
 
+# ---------------------------------------------------------
+# Calculate Text Hash
+# ---------------------------------------------------------
 def calculate_text_hash(text: str) -> str:
     """
     SHA-256 hash of the embedding input text.
 
-    Used later to skip re-embedding unchanged menu items.
+    Used to determine whether an existing embedding
+    is still valid.
     """
 
     return hashlib.sha256(
@@ -46,33 +56,43 @@ def calculate_text_hash(text: str) -> str:
     ).hexdigest()
 
 
+# ---------------------------------------------------------
+# Estimate Token Count
+# ---------------------------------------------------------
 def estimate_token_count(text: str) -> int:
     """
     Lightweight token estimate.
 
-    This is intentionally simple because the actual embedding
-    provider will be responsible for generating embeddings.
+    The actual embedding provider is responsible
+    for generating the embedding.
     """
 
     return len(text.split())
 
-
 def rebuild_restaurant_chunks(
     db: Session,
     restaurant_id: int,
-) -> int:
+) -> list[int]:
     """
-    Synchronize content_chunks with the restaurant's current menu.
+    Synchronize content_chunks with the restaurant's
+    current menu.
 
-    Behaviour:
+    Returns:
+        List of content_chunk_id values that require
+        a new embedding.
 
-    1. Creates one enriched chunk per menu item.
-    2. Stores restaurant/menu metadata.
-    3. Preserves existing chunks when their text is unchanged.
-    4. Updates metadata when price/availability changes.
-    5. Removes chunks for deleted menu items.
-    6. Never creates duplicate chunks for the same menu item.
+    A chunk requires embedding when:
+
+        - it is newly created
+        - its embedding input text changed
+
+    If only metadata such as price or availability changes,
+    the existing embedding is preserved.
     """
+
+    # ---------------------------------------------------------
+    # Find restaurant
+    # ---------------------------------------------------------
 
     restaurant = db.get(
         Restaurant,
@@ -82,9 +102,15 @@ def rebuild_restaurant_chunks(
     if restaurant is None:
         raise ValueError("Restaurant not found")
 
+    # ---------------------------------------------------------
+    # Load categories and menu items
+    # ---------------------------------------------------------
+
     categories = (
         db.query(MenuCategory)
-        .options(joinedload(MenuCategory.menu_items))
+        .options(
+            joinedload(MenuCategory.menu_items)
+        )
         .filter(
             MenuCategory.restaurant_id == restaurant_id
         )
@@ -96,7 +122,7 @@ def rebuild_restaurant_chunks(
     )
 
     # ---------------------------------------------------------
-    # Existing chunks indexed by menu_item_id
+    # Existing chunks
     # ---------------------------------------------------------
 
     existing_chunks = (
@@ -114,12 +140,10 @@ def rebuild_restaurant_chunks(
 
     current_menu_item_ids: set[int] = set()
 
-    chunks_created = 0
-    chunks_updated = 0
-    chunks_unchanged = 0
+    chunks_needing_embedding: list[int] = []
 
     # ---------------------------------------------------------
-    # Build/update one chunk per menu item
+    # Process menu items
     # ---------------------------------------------------------
 
     for category in categories:
@@ -137,6 +161,10 @@ def rebuild_restaurant_chunks(
             current_menu_item_ids.add(
                 menu_item.menu_item_id
             )
+
+            # -------------------------------------------------
+            # Build enriched embedding text
+            # -------------------------------------------------
 
             text = build_menu_item_text(
                 restaurant=restaurant,
@@ -156,39 +184,64 @@ def rebuild_restaurant_chunks(
 
             if existing is not None:
 
-                # The embedding input hasn't changed.
-                # Keep the existing vector.
+                # ---------------------------------------------
+                # Text did NOT change
+                # ---------------------------------------------
+
                 if existing.text_hash == text_hash:
+
                     existing.category = category.name
-                    existing.cuisine = restaurant.cuisine
-                    existing.price = menu_item.price
+
+                    existing.cuisine = (
+                        restaurant.cuisine
+                    )
+
+                    existing.price = (
+                        menu_item.price
+                    )
+
                     existing.is_available = (
                         menu_item.is_available
                     )
+
                     existing.token_count = (
                         estimate_token_count(text)
                     )
 
-                    chunks_unchanged += 1
+                # ---------------------------------------------
+                # Text changed
+                # ---------------------------------------------
 
-                # The actual text changed.
-                # Clear the old embedding so the Celery
-                # embedding task knows it needs re-embedding.
                 else:
+
                     existing.category = category.name
-                    existing.cuisine = restaurant.cuisine
-                    existing.price = menu_item.price
+
+                    existing.cuisine = (
+                        restaurant.cuisine
+                    )
+
+                    existing.price = (
+                        menu_item.price
+                    )
+
                     existing.is_available = (
                         menu_item.is_available
                     )
+
                     existing.text = text
+
                     existing.token_count = (
                         estimate_token_count(text)
                     )
+
                     existing.text_hash = text_hash
+
+                    # Old embedding is no longer valid.
                     existing.embedding = None
 
-                    chunks_updated += 1
+                    chunks_needing_embedding.append(
+                        existing.content_chunk_id
+                    )
 
                 continue
 
@@ -212,27 +265,37 @@ def rebuild_restaurant_chunks(
 
             db.add(chunk)
 
-            chunks_created += 1
+            # Force SQLAlchemy to obtain the generated ID.
+            db.flush()
+
+            chunks_needing_embedding.append(
+                chunk.content_chunk_id
+            )
 
     # ---------------------------------------------------------
     # Remove stale chunks
-    #
-    # These correspond to menu items that no longer exist.
     # ---------------------------------------------------------
 
     for chunk in existing_chunks:
 
-        if chunk.menu_item_id not in current_menu_item_ids:
+        if (
+            chunk.menu_item_id
+            not in current_menu_item_ids
+        ):
             db.delete(chunk)
+
+    # ---------------------------------------------------------
+    # Save all database changes
+    # ---------------------------------------------------------
 
     db.commit()
 
-    return (
-        chunks_created
-        + chunks_updated
-        + chunks_unchanged
-    )
+    return chunks_needing_embedding
 
+
+# ---------------------------------------------------------
+# Semantic Search
+# ---------------------------------------------------------
 def search_content_chunks(
     db: Session,
     query: str,
@@ -247,6 +310,7 @@ def search_content_chunks(
         List of (ContentChunk, similarity_score)
 
     Results are restricted to:
+
         - chunks with embeddings
         - available menu items
         - open restaurants
@@ -255,13 +319,27 @@ def search_content_chunks(
     to their own restaurant.
     """
 
-    query_embedding = generate_embedding(query)
+    # -----------------------------------------------------
+    # Generate query embedding
+    # -----------------------------------------------------
+
+    query_embedding = generate_embedding(
+        query
+    )
+
+    # -----------------------------------------------------
+    # Calculate cosine distance
+    # -----------------------------------------------------
 
     distance = ContentChunk.embedding.cosine_distance(
         query_embedding
     )
 
     similarity = 1 - distance
+
+    # -----------------------------------------------------
+    # Build search statement
+    # -----------------------------------------------------
 
     statement = (
         select(
@@ -285,10 +363,20 @@ def search_content_chunks(
         .limit(limit)
     )
 
+    # -----------------------------------------------------
+    # Optional restaurant filter
+    # -----------------------------------------------------
+
     if restaurant_id is not None:
+
         statement = statement.where(
-            ContentChunk.restaurant_id == restaurant_id
+            ContentChunk.restaurant_id
+            == restaurant_id
         )
+
+    # -----------------------------------------------------
+    # Execute search
+    # -----------------------------------------------------
 
     return list(
         db.execute(statement).all()
