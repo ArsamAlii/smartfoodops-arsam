@@ -8,7 +8,8 @@ from app.services.content_chunk_service import (
 )
 
 from app.workers.embedding_tasks import (
-    embed_content_chunk_task,
+    embed_content_chunks_batch_task,
+    BATCH_SIZE,
 )
 
 
@@ -69,15 +70,19 @@ def create_menu_item(
 
     # ---------------------------------------------------
     # Queue embedding jobs
-    # ---------------------------------------------------
+      # ---------------------------------------------------
+    for i in range(
+        0,
+        len(chunks_needing_embedding),
+        BATCH_SIZE,
+    ):
+        batch = chunks_needing_embedding[
+            i:i + BATCH_SIZE
+        ]
 
-    for content_chunk_id in chunks_needing_embedding:
-
-        embed_content_chunk_task.delay(
-            content_chunk_id
+        embed_content_chunks_batch_task.delay(
+            batch
         )
-
-    return menu_item
 
 
 # -------------------------------------------------------
