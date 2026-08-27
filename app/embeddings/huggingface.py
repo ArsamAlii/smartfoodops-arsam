@@ -1,6 +1,6 @@
 import os
 
-from huggingface_hub import InferenceClient
+import httpx
 
 from app.embeddings.base import EmbeddingProvider
 
@@ -9,7 +9,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
     """
     Hugging Face embedding provider.
 
-    Uses the configured Hugging Face embedding model.
+    Uses the Hugging Face Serverless Inference API directly.
     """
 
     def __init__(
@@ -35,10 +35,36 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
                 "EMBEDDING_API_KEY is not configured"
             )
 
-        self.client = InferenceClient(
-            provider="hf-inference",
-            api_key=self.api_key,
+        self.url = (
+            "https://router.huggingface.co/"
+            f"hf-inference/models/{self.model}"
+            "/pipeline/feature-extraction"
         )
+
+    def _embed(self, inputs):
+        import socket
+
+        hostname = "router.huggingface.co"
+
+        print("HF URL:", self.url)
+        print("HF hostname:", hostname)
+        print("HF DNS:", socket.gethostbyname(hostname))
+
+        response = httpx.post(
+            self.url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "inputs": inputs,
+            },
+            timeout=60,
+        )
+
+        response.raise_for_status()
+
+        return response.json()
 
     def embed_documents(
         self,
@@ -47,10 +73,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         if not texts:
             return []
 
-        embeddings = self.client.feature_extraction(
-            texts,
-            model=self.model,
-        )
+        embeddings = self._embed(texts)
 
         return [
             list(map(float, embedding))
@@ -61,11 +84,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         self,
         text: str,
     ) -> list[float]:
-
-        embedding = self.client.feature_extraction(
-            text,
-            model=self.model,
-        )
+        embedding = self._embed(text)
 
         return list(
             map(float, embedding)

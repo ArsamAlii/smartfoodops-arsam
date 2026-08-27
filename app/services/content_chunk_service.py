@@ -1,11 +1,12 @@
 import hashlib
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.content_chunk import ContentChunk
 from app.models.menu_category import MenuCategory
 from app.models.restaurant import Restaurant
-
+from app.services.embedding_service import generate_embedding
 
 def build_menu_item_text(
     restaurant: Restaurant,
@@ -230,4 +231,42 @@ def rebuild_restaurant_chunks(
         chunks_created
         + chunks_updated
         + chunks_unchanged
+    )
+
+def search_content_chunks(
+    db: Session,
+    query: str,
+    restaurant_id: int | None = None,
+    limit: int = 5,
+) -> list[ContentChunk]:
+    """
+    Search menu content using semantic similarity.
+
+    The user query is converted into a 384-dimensional
+    embedding and compared against stored pgvector embeddings.
+    """
+
+    query_embedding = generate_embedding(query)
+
+    similarity = ContentChunk.embedding.cosine_distance(
+        query_embedding
+    )
+
+    statement = (
+        select(ContentChunk)
+        .where(
+            ContentChunk.embedding.is_not(None),
+            ContentChunk.is_available.is_(True),
+        )
+        .order_by(similarity)
+        .limit(limit)
+    )
+
+    if restaurant_id is not None:
+        statement = statement.where(
+            ContentChunk.restaurant_id == restaurant_id
+        )
+
+    return list(
+        db.scalars(statement).all()
     )
