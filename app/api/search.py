@@ -36,10 +36,10 @@ def search_menu(
     results = search_content_chunks(
         db=db,
         query=request.query,
+        current_user=current_user,
         limit=request.limit,
         similarity_threshold=request.similarity_threshold,
     )
-
     search_results = []
 
     for chunk, similarity in results:

@@ -1,0 +1,42 @@
+[
+    {
+      "query": "What burgers are available?",
+      "expected_menu_item_id": 3
+    },
+    {
+      "query": "Do you have a beef burger?",
+      "expected_menu_item_id": 3
+    },
+    {
+      "query": "I want biryani",
+      "expected_menu_item_id": 1
+    },
+    {
+      "query": "What rice dish with chicken do you have?",
+      "expected_menu_item_id": 1
+    },
+    {
+      "query": "Do you have chicken karahi?",
+      "expected_menu_item_id": 2
+    },
+    {
+      "query": "Which dish has tender chicken cooked in karahi style?",
+      "expected_menu_item_id": 2
+    },
+    {
+      "query": "What soft drinks are available?",
+      "expected_menu_item_id": 4
+    },
+    {
+      "query": "Do you have Pepsi?",
+      "expected_menu_item_id": 4
+    },
+    {
+      "query": "Do you have anda chanay?",
+      "expected_menu_item_id": 6
+    },
+    {
+      "query": "What is available for breakfast?",
+      "expected_menu_item_id": 6
+    }
+  ]

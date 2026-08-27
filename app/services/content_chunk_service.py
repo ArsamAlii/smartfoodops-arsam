@@ -8,9 +8,9 @@ from app.models.menu_category import MenuCategory
 from app.models.restaurant import Restaurant
 
 from app.services.embedding_service import generate_embedding
-from app.workers.embedding_tasks import embed_content_chunk_task
 
-
+from app.models.enums import UserRole
+from app.models.users import User
 # ---------------------------------------------------------
 # Build Menu Item Text
 # ---------------------------------------------------------
@@ -299,36 +299,33 @@ def rebuild_restaurant_chunks(
 def search_content_chunks(
     db: Session,
     query: str,
-    restaurant_id: int | None = None,
+    current_user: User,
     limit: int = 5,
     similarity_threshold: float = 0.30,
 ) -> list[tuple[ContentChunk, float]]:
     """
     Search menu content using semantic similarity.
 
-    Returns:
-        List of (ContentChunk, similarity_score)
+    Customer:
+        - only available items
+        - only open restaurants
 
-    Results are restricted to:
+    Restaurant admin:
+        - only their own restaurant
+        - may see unavailable items
+        - may see items even when their restaurant is closed
 
-        - chunks with embeddings
-        - available menu items
-        - open restaurants
-
-    Restaurant admins can optionally restrict the search
-    to their own restaurant.
+    All filtering is performed in the database query.
     """
 
     # -----------------------------------------------------
     # Generate query embedding
     # -----------------------------------------------------
 
-    query_embedding = generate_embedding(
-        query
-    )
+    query_embedding = generate_embedding(query)
 
     # -----------------------------------------------------
-    # Calculate cosine distance
+    # Calculate cosine similarity
     # -----------------------------------------------------
 
     distance = ContentChunk.embedding.cosine_distance(
@@ -338,7 +335,7 @@ def search_content_chunks(
     similarity = 1 - distance
 
     # -----------------------------------------------------
-    # Build search statement
+    # Base query
     # -----------------------------------------------------
 
     statement = (
@@ -353,30 +350,50 @@ def search_content_chunks(
         )
         .where(
             ContentChunk.embedding.is_not(None),
-            ContentChunk.is_available.is_(True),
-            Restaurant.is_open.is_(True),
             similarity >= similarity_threshold,
         )
-        .order_by(
-            distance
-        )
-        .limit(limit)
     )
 
     # -----------------------------------------------------
-    # Optional restaurant filter
+    # Customer access rules
     # -----------------------------------------------------
 
-    if restaurant_id is not None:
+    if current_user.role == UserRole.CUSTOMER:
 
         statement = statement.where(
-            ContentChunk.restaurant_id
-            == restaurant_id
+            ContentChunk.is_available.is_(True),
+            Restaurant.is_open.is_(True),
         )
 
     # -----------------------------------------------------
-    # Execute search
+    # Restaurant admin access rules
     # -----------------------------------------------------
+
+    elif current_user.role == UserRole.RESTAURANT_ADMIN:
+
+        statement = statement.where(
+            Restaurant.user_id == current_user.user_id,
+        )
+
+    # -----------------------------------------------------
+    # Other roles
+    # -----------------------------------------------------
+
+    else:
+
+        statement = statement.where(
+            False,
+        )
+
+    # -----------------------------------------------------
+    # Ranking
+    # -----------------------------------------------------
+
+    statement = (
+        statement
+        .order_by(distance)
+        .limit(limit)
+    )
 
     return list(
         db.execute(statement).all()
