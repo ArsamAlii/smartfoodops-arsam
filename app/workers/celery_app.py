@@ -23,6 +23,7 @@ celery_app = Celery(
         "app.workers.tasks.analytics_tasks",
         "app.workers.tasks.retry_tasks",
         "app.workers.tasks.notification_tasks",
+        "app.workers.embedding_tasks",
     ],
 )
 
