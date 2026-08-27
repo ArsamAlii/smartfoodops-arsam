@@ -26,6 +26,7 @@ class SearchResult(BaseModel):
     menu_item_id: int
     restaurant_id: int
     restaurant: str
+    name: str
     category: str
     cuisine: str
     price: Decimal

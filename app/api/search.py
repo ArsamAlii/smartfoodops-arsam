@@ -23,7 +23,7 @@ router = APIRouter(
     tags=["Search"],
 )
 
-
+from app.models.menu_item import MenuItem
 @router.post(
     "",
     response_model=SearchResponse,
@@ -48,12 +48,16 @@ def search_menu(
             Restaurant,
             chunk.restaurant_id,
         )
-
+        menu_item = db.get(
+            MenuItem,
+            chunk.menu_item_id,
+        )
         search_results.append(
             SearchResult(
                 menu_item_id=chunk.menu_item_id,
                 restaurant_id=chunk.restaurant_id,
                 restaurant=restaurant.name,
+                name=menu_item.name,
                 category=chunk.category,
                 cuisine=chunk.cuisine,
                 price=chunk.price,
