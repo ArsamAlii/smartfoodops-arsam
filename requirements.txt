@@ -42,3 +42,4 @@ python-json-logger
 kafka-python
 huggingface_hub
 numpy
+groq
