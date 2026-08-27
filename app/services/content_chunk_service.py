@@ -238,27 +238,50 @@ def search_content_chunks(
     query: str,
     restaurant_id: int | None = None,
     limit: int = 5,
-) -> list[ContentChunk]:
+    similarity_threshold: float = 0.30,
+) -> list[tuple[ContentChunk, float]]:
     """
     Search menu content using semantic similarity.
 
-    The user query is converted into a 384-dimensional
-    embedding and compared against stored pgvector embeddings.
+    Returns:
+        List of (ContentChunk, similarity_score)
+
+    Results are restricted to:
+        - chunks with embeddings
+        - available menu items
+        - open restaurants
+
+    Restaurant admins can optionally restrict the search
+    to their own restaurant.
     """
 
     query_embedding = generate_embedding(query)
 
-    similarity = ContentChunk.embedding.cosine_distance(
+    distance = ContentChunk.embedding.cosine_distance(
         query_embedding
     )
 
+    similarity = 1 - distance
+
     statement = (
-        select(ContentChunk)
+        select(
+            ContentChunk,
+            similarity.label("similarity"),
+        )
+        .join(
+            Restaurant,
+            Restaurant.restaurant_id
+            == ContentChunk.restaurant_id,
+        )
         .where(
             ContentChunk.embedding.is_not(None),
             ContentChunk.is_available.is_(True),
+            Restaurant.is_open.is_(True),
+            similarity >= similarity_threshold,
         )
-        .order_by(similarity)
+        .order_by(
+            distance
+        )
         .limit(limit)
     )
 
@@ -268,5 +291,5 @@ def search_content_chunks(
         )
 
     return list(
-        db.scalars(statement).all()
+        db.execute(statement).all()
     )
