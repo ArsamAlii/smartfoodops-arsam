@@ -42,14 +42,6 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         )
 
     def _embed(self, inputs):
-        import socket
-
-        hostname = "router.huggingface.co"
-
-        print("HF URL:", self.url)
-        print("HF hostname:", hostname)
-        print("HF DNS:", socket.gethostbyname(hostname))
-
         response = httpx.post(
             self.url,
             headers={

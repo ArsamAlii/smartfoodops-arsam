@@ -39,7 +39,7 @@ from app.api.celery import router as celery_router
 from app.core.observability import CorrelationAndMetricsMiddleware, configure_logging
 from app.db.database import SessionLocal
 from app.api.analytics import router as analytics_router
-
+from app.api.search import router as search_router
 # Base.metadata.create_all(bind=engine)
 
 
@@ -81,6 +81,7 @@ app.include_router(users_router)
 app.include_router(failed_jobs_router)
 app.include_router(celery_router)
 app.include_router(analytics_router)
+app.include_router(search_router)
 # -------------------------------------------------------
 # Root
 # -------------------------------------------------------
