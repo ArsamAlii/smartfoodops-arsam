@@ -205,12 +205,17 @@ def update_menu_item(
         # Queue only chunks whose text changed
         # -----------------------------------------------
 
-        for content_chunk_id in (
-            chunks_needing_embedding
+        for i in range(
+            0,
+            len(chunks_needing_embedding),
+            BATCH_SIZE,
         ):
+            batch = chunks_needing_embedding[
+                i:i + BATCH_SIZE
+            ]
 
-            embed_content_chunk_task.delay(
-                content_chunk_id
+            embed_content_chunks_batch_task.delay(
+                batch
             )
 
     return menu_item

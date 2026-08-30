@@ -8,7 +8,7 @@ from app.services.content_chunk_service import (
 )
 
 from app.workers.embedding_tasks import (
-    embed_content_chunk_task,
+    embed_content_chunks_batch_task,
 )
 
 
@@ -67,10 +67,9 @@ def create_category(
     # Queue required embedding jobs
     # ---------------------------------------------------
 
-    for content_chunk_id in chunks_needing_embedding:
-
-        embed_content_chunk_task.delay(
-            content_chunk_id
+    if chunks_needing_embedding:
+        embed_content_chunks_batch_task.delay(
+            chunks_needing_embedding
         )
 
     return category
@@ -161,10 +160,9 @@ def update_category(
     # Queue only chunks whose embedding text changed
     # ---------------------------------------------------
 
-    for content_chunk_id in chunks_needing_embedding:
-
-        embed_content_chunk_task.delay(
-            content_chunk_id
+    if chunks_needing_embedding:
+        embed_content_chunks_batch_task.delay(
+            chunks_needing_embedding
         )
 
     return category

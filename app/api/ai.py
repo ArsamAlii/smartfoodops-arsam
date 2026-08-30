@@ -9,7 +9,9 @@ from app.db.database import get_db
 from app.models.restaurant import Restaurant
 from app.models.menu_item import MenuItem
 from app.models.users import User
+
 import os
+
 from app.schemas.ai import (
     AIAskRequest,
     AIAskResponse,
@@ -55,6 +57,7 @@ def ask_ai(
     results = search_content_chunks(
         db=db,
         query=request.question,
+        current_user=current_user,
         limit=retrieval_top_k,
         similarity_threshold=retrieval_min_similarity,
     )
@@ -130,7 +133,7 @@ def ask_ai(
     )
 
     # ---------------------------------------------------------
-    # 5. Generate answer using Groq
+    # 5. Generate answer using LLM
     # ---------------------------------------------------------
 
     answer = generate_answer(
