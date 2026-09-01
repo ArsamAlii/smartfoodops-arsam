@@ -39,8 +39,8 @@ class GroqLLMProvider(LLMProvider):
 
         self.client = AsyncGroq(
             api_key=self.api_key,
-            timeout=30.0,
-            max_retries=2,
+            timeout=60.0,
+            max_retries=0,
         )
 
     async def generate(
@@ -52,22 +52,24 @@ class GroqLLMProvider(LLMProvider):
         Generate a complete response from Groq.
         """
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-            temperature=0,
-            max_completion_tokens=500,
-            reasoning_effort="low",
-            include_reasoning=False,
+        response = (
+            await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+                temperature=0,
+                max_completion_tokens=500,
+                reasoning_effort="low",
+                include_reasoning=False,
+            )
         )
 
         choice = response.choices[0]
@@ -93,7 +95,7 @@ class GroqLLMProvider(LLMProvider):
 
         return LLMResponse(
             text=choice.message.content or "",
-            model=self.model,
+            model=response.model or self.model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
@@ -111,23 +113,25 @@ class GroqLLMProvider(LLMProvider):
         Reasoning output is disabled.
         """
 
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-            temperature=0,
-            max_completion_tokens=500,
-            reasoning_effort="low",
-            include_reasoning=False,
-            stream=True,
+        stream = (
+            await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+                temperature=0,
+                max_completion_tokens=500,
+                reasoning_effort="low",
+                include_reasoning=False,
+                stream=True,
+            )
         )
 
         async for chunk in stream:
