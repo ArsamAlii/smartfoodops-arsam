@@ -39,6 +39,47 @@ async def ask_assistant(
     current_user: User = Depends(get_current_user),
 ):
     # =========================================================
+    # ORDER-RELATED QUESTION WITHOUT ORDER ID
+    # =========================================================
+
+    order_keywords = [
+        "order",
+        "orders",
+        "delivery",
+        "delivered",
+        "delaying",
+        "delayed",
+        "late",
+        "rider",
+        "cancelled",
+        "canceled",
+        "status",
+        "tracking",
+        "track",
+        "where is my",
+        "when will my",
+        "my order",
+    ]
+
+    question_lower = request.question.lower()
+
+    is_order_question = any(
+        keyword in question_lower
+        for keyword in order_keywords
+    )
+
+    if is_order_question and request.order_id is None:
+        return AIAskResponse(
+            question=request.question,
+            answer=(
+                "I can help you with your order, but I need "
+                "your Order ID first. Please provide your "
+                "Order ID and try again."
+            ),
+            sources=[],
+        )
+
+    # =========================================================
     # ORDER EXPLANATION MODE
     # =========================================================
 
@@ -161,6 +202,11 @@ async def ask_assistant(
             answer=response.text,
             sources=[],
         )
+
+    # =========================================================
+    # MENU DISCOVERY MODE
+    # =========================================================
+
     # ---------------------------------------------------------
     # 1. Retrieval configuration
     # ---------------------------------------------------------
@@ -212,6 +258,7 @@ async def ask_assistant(
 
         # Extra safety check using current database state.
         # A customer must never receive an unavailable item.
+
         if not restaurant.is_open:
             continue
 
