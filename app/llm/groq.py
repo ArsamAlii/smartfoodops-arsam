@@ -9,6 +9,9 @@ from app.llm.base import LLMProvider, LLMResponse
 class GroqLLMProvider(LLMProvider):
     """
     Groq implementation of the LLMProvider interface.
+
+    Uses Groq's async client so LLM calls do not block
+    FastAPI's event loop.
     """
 
     def __init__(
@@ -30,12 +33,14 @@ class GroqLLMProvider(LLMProvider):
             model
             or os.getenv(
                 "LLM_MODEL",
-                "llama-3.1-8b-instant",
+                "openai/gpt-oss-20b",
             )
         )
 
         self.client = AsyncGroq(
-            api_key=self.api_key
+            api_key=self.api_key,
+            timeout=30.0,
+            max_retries=2,
         )
 
     async def generate(
@@ -43,6 +48,9 @@ class GroqLLMProvider(LLMProvider):
         system_prompt: str,
         user_prompt: str,
     ) -> LLMResponse:
+        """
+        Generate a complete response from Groq.
+        """
 
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -57,11 +65,12 @@ class GroqLLMProvider(LLMProvider):
                 },
             ],
             temperature=0,
-            max_tokens=500,
+            max_completion_tokens=500,
+            reasoning_effort="low",
+            include_reasoning=False,
         )
 
         choice = response.choices[0]
-
         usage = response.usage
 
         prompt_tokens = (
@@ -95,6 +104,12 @@ class GroqLLMProvider(LLMProvider):
         system_prompt: str,
         user_prompt: str,
     ) -> AsyncIterator[str]:
+        """
+        Stream generated text progressively.
+
+        Only actual response text is yielded.
+        Reasoning output is disabled.
+        """
 
         stream = await self.client.chat.completions.create(
             model=self.model,
@@ -109,16 +124,21 @@ class GroqLLMProvider(LLMProvider):
                 },
             ],
             temperature=0,
-            max_tokens=500,
+            max_completion_tokens=500,
+            reasoning_effort="low",
+            include_reasoning=False,
             stream=True,
         )
 
         async for chunk in stream:
+
             if not chunk.choices:
                 continue
 
             text = (
-                chunk.choices[0].delta.content
+                chunk.choices[0]
+                .delta
+                .content
             )
 
             if text:

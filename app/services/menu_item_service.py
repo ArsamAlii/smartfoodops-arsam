@@ -84,6 +84,7 @@ def create_menu_item(
             batch
         )
 
+    return menu_item
 
 # -------------------------------------------------------
 # Get All Menu Items of a Category

@@ -7,6 +7,11 @@ class AIAskRequest(BaseModel):
         max_length=1000,
     )
 
+    order_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
 
 class AISource(BaseModel):
     menu_item_id: int

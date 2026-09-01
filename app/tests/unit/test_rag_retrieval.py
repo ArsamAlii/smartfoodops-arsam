@@ -59,7 +59,7 @@ def test_availability_and_open_filtering():
 def test_restaurant_admin_access_control():
     """
     Restaurant admins are restricted to restaurants
-    owned by their user account.
+    owned by their  user account.
     """
 
     assert UserRole.RESTAURANT_ADMIN.value == "restaurant_admin"
