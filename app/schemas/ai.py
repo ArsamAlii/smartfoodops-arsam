@@ -1,4 +1,3 @@
-```python
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -63,4 +62,4 @@ class AIAskResponse(BaseModel):
     question: str
     answer: str
     sources: list[AISource]
-```
+

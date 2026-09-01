@@ -346,13 +346,20 @@ async def ask_assistant(
     # RETRIEVE MENU CHUNKS
     # ---------------------------------------------------------
 
-    results = search_content_chunks(
-        db=db,
-        query=request.question,
-        current_user=current_user,
-        limit=retrieval_top_k,
-        similarity_threshold=retrieval_min_similarity,
-    )
+    try:
+        results = search_content_chunks(
+            db=db,
+            query=request.question,
+            current_user=current_user,
+            limit=retrieval_top_k,
+            similarity_threshold=retrieval_min_similarity,
+        )
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
 
     # ---------------------------------------------------------
     # BUILD GROUNDED CONTEXT

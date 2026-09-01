@@ -1,4 +1,5 @@
 import os
+import time
 
 import httpx
 
@@ -41,22 +42,62 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
             "/pipeline/feature-extraction"
         )
 
-    def _embed(self, inputs):
-        response = httpx.post(
-            self.url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "inputs": inputs,
-            },
-            timeout=60,
+        self.timeout = float(
+            os.getenv("EMBEDDING_TIMEOUT", "60")
         )
 
-        response.raise_for_status()
+        self.max_retries = int(
+            os.getenv("EMBEDDING_MAX_RETRIES", "2")
+        )
 
-        return response.json()
+    def _embed(self, inputs):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        last_error = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = httpx.post(
+                    self.url,
+                    headers=headers,
+                    json={
+                        "inputs": inputs,
+                    },
+                    timeout=self.timeout,
+                )
+
+                response.raise_for_status()
+
+                return response.json()
+
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.ReadError,
+            ) as exc:
+                last_error = exc
+
+                if attempt < self.max_retries:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+
+                raise RuntimeError(
+                    "Embedding service is temporarily unavailable. "
+                    "Please try again."
+                ) from exc
+
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(
+                    "Embedding service returned an error."
+                ) from exc
+
+        raise RuntimeError(
+            "Embedding service is temporarily unavailable."
+        ) from last_error
 
     def embed_documents(
         self,
