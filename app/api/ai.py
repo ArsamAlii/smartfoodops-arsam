@@ -1,34 +1,41 @@
 import os
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from groq import APIConnectionError
 
 from app.api.dependencies import get_current_user
+from app.core.observability import correlation_id as request_correlation_id
 from app.db.database import get_db
 from app.llm import GroqLLMProvider
+
+from app.models.ai_interaction import AIInteraction
 from app.models.menu_item import MenuItem
 from app.models.restaurant import Restaurant
 from app.models.users import User
 from app.models.order import Order
 from app.models.order_status_history import OrderStatusHistory
+
 from app.prompts import (
     PROMPT_DISCOVERY_V1,
     PROMPT_ORDER_EXPLAIN_V1,
 )
+
 from app.schemas.ai import (
     AIAskRequest,
     AIAskResponse,
     AISource,
 )
+
 from app.services.content_chunk_service import search_content_chunks
-from groq import APIConnectionError
+
 
 router = APIRouter(
     prefix="/assistant",
     tags=["Assistant"],
 )
-import time
-from app.models.ai_interaction import AIInteraction
+
 
 @router.post(
     "/ask",
@@ -39,7 +46,24 @@ async def ask_assistant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # =========================================================
+    # REQUEST START TIME
+    # =========================================================
+
     start_time = time.perf_counter()
+
+    # =========================================================
+    # PART A CORRELATION ID
+    # =========================================================
+    #
+    # Part A middleware stores the request ID inside the
+    # correlation_id ContextVar.
+    #
+    # We reuse that exact value for AI interaction tracing.
+    #
+    # =========================================================
+
+    correlation_id = request_correlation_id.get()
 
     # =========================================================
     # DETECT ORDER-RELATED QUESTION
@@ -76,6 +100,7 @@ async def ask_assistant(
     # =========================================================
 
     if is_order_question and request.order_id is None:
+
         answer = (
             "I can help you with your order, but I need "
             "your Order ID first. Please provide your "
@@ -99,7 +124,7 @@ async def ask_assistant(
             total_tokens=0,
             latency_ms=latency_ms,
             refused=True,
-            correlation_id=None,
+            correlation_id=correlation_id,
         )
 
         db.add(interaction)
@@ -118,7 +143,7 @@ async def ask_assistant(
     if request.order_id is not None:
 
         # -----------------------------------------------------
-        # Find order
+        # FIND ORDER
         # -----------------------------------------------------
 
         order = (
@@ -137,7 +162,6 @@ async def ask_assistant(
 
         # -----------------------------------------------------
         # OWNERSHIP CHECK
-        # Customer can ONLY access their own order
         # -----------------------------------------------------
 
         if order.customer_id != current_user.user_id:
@@ -150,7 +174,7 @@ async def ask_assistant(
             )
 
         # -----------------------------------------------------
-        # Retrieve REAL order status history
+        # GET REAL ORDER STATUS HISTORY
         # -----------------------------------------------------
 
         status_history = (
@@ -166,7 +190,7 @@ async def ask_assistant(
         )
 
         # -----------------------------------------------------
-        # Build verified status history
+        # BUILD VERIFIED STATUS HISTORY
         # -----------------------------------------------------
 
         history_lines = []
@@ -194,7 +218,7 @@ async def ask_assistant(
             )
 
         # -----------------------------------------------------
-        # Build VERIFIED order context
+        # BUILD VERIFIED ORDER CONTEXT
         # -----------------------------------------------------
 
         order_context = (
@@ -210,7 +234,7 @@ async def ask_assistant(
         )
 
         # -----------------------------------------------------
-        # Build grounded order prompt
+        # BUILD ORDER EXPLANATION PROMPT
         # -----------------------------------------------------
 
         user_prompt = PROMPT_ORDER_EXPLAIN_V1.format(
@@ -219,12 +243,13 @@ async def ask_assistant(
         )
 
         # -----------------------------------------------------
-        # Call LLM
+        # CALL LLM
         # -----------------------------------------------------
 
         llm = GroqLLMProvider()
 
         try:
+
             response = await llm.generate(
                 system_prompt=(
                     "You are a SmartFoodOps order and "
@@ -245,6 +270,7 @@ async def ask_assistant(
             )
 
         except APIConnectionError:
+
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -254,7 +280,7 @@ async def ask_assistant(
             )
 
         # -----------------------------------------------------
-        # Calculate latency
+        # CALCULATE LATENCY
         # -----------------------------------------------------
 
         latency_ms = int(
@@ -262,7 +288,7 @@ async def ask_assistant(
         )
 
         # -----------------------------------------------------
-        # SAVE AI INTERACTION
+        # SAVE ORDER AI INTERACTION
         # -----------------------------------------------------
 
         interaction = AIInteraction(
@@ -278,14 +304,14 @@ async def ask_assistant(
             total_tokens=response.total_tokens,
             latency_ms=latency_ms,
             refused=False,
-            correlation_id=None,
+            correlation_id=correlation_id,
         )
 
         db.add(interaction)
         db.commit()
 
         # -----------------------------------------------------
-        # Return response
+        # RETURN ORDER ANSWER
         # -----------------------------------------------------
 
         return AIAskResponse(
@@ -299,7 +325,7 @@ async def ask_assistant(
     # =========================================================
 
     # ---------------------------------------------------------
-    # Retrieval configuration
+    # RETRIEVAL CONFIGURATION
     # ---------------------------------------------------------
 
     retrieval_top_k = int(
@@ -317,7 +343,7 @@ async def ask_assistant(
     )
 
     # ---------------------------------------------------------
-    # Retrieve menu chunks
+    # RETRIEVE MENU CHUNKS
     # ---------------------------------------------------------
 
     results = search_content_chunks(
@@ -329,12 +355,11 @@ async def ask_assistant(
     )
 
     # ---------------------------------------------------------
-    # Build grounded context + citations
+    # BUILD GROUNDED CONTEXT
     # ---------------------------------------------------------
 
     context_parts = []
     sources = []
-
     retrieved_chunk_ids = []
 
     for chunk, similarity in results:
@@ -357,7 +382,7 @@ async def ask_assistant(
             continue
 
         # -----------------------------------------------------
-        # Current availability safety checks
+        # CURRENT AVAILABILITY SAFETY CHECKS
         # -----------------------------------------------------
 
         if not restaurant.is_open:
@@ -373,7 +398,7 @@ async def ask_assistant(
             continue
 
         # -----------------------------------------------------
-        # Add item to grounded context
+        # BUILD GROUNDED MENU CONTEXT
         # -----------------------------------------------------
 
         context_parts.append(
@@ -390,7 +415,7 @@ async def ask_assistant(
         )
 
         # -----------------------------------------------------
-        # Citation
+        # BUILD SOURCE / CITATION
         # -----------------------------------------------------
 
         sources.append(
@@ -434,7 +459,7 @@ async def ask_assistant(
             total_tokens=0,
             latency_ms=latency_ms,
             refused=True,
-            correlation_id=None,
+            correlation_id=correlation_id,
         )
 
         db.add(interaction)
@@ -488,6 +513,7 @@ async def ask_assistant(
         )
 
     except APIConnectionError:
+
         raise HTTPException(
             status_code=503,
             detail=(
@@ -505,7 +531,7 @@ async def ask_assistant(
     )
 
     # =========================================================
-    # SAVE AI INTERACTION
+    # SAVE DISCOVERY AI INTERACTION
     # =========================================================
 
     interaction = AIInteraction(
@@ -521,14 +547,14 @@ async def ask_assistant(
         total_tokens=response.total_tokens,
         latency_ms=latency_ms,
         refused=False,
-        correlation_id=None,
+        correlation_id=correlation_id,
     )
 
     db.add(interaction)
     db.commit()
 
     # =========================================================
-    # RETURN ANSWER + CITATIONS
+    # RETURN DISCOVERY ANSWER + SOURCES
     # =========================================================
 
     return AIAskResponse(
