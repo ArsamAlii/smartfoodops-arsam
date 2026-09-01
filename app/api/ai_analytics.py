@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_role
 from app.db.database import get_db
+
 from app.models.ai_interaction import AIInteraction
 from app.models.enums import UserRole
 from app.models.users import User
@@ -35,7 +36,7 @@ def get_ai_analytics(
     """
     Return aggregate AI analytics.
 
-    Metrics:
+    Includes:
     - total questions/interactions
     - answered vs refused
     - breakdown by assistance type
@@ -128,7 +129,6 @@ def get_ai_analytics(
 
     # =========================================================
     # P95 LATENCY
-    # PostgreSQL percentile_cont
     # =========================================================
 
     p95_latency_ms = (
@@ -152,11 +152,13 @@ def get_ai_analytics(
     grouped = (
         db.query(
             AIInteraction.assistance_type,
+
             func.count(
                 AIInteraction.interaction_id
             ).label("questions"),
+
             func.sum(
-                func.case(
+                case(
                     (
                         AIInteraction.refused.is_(False),
                         1,
@@ -164,8 +166,9 @@ def get_ai_analytics(
                     else_=0,
                 )
             ).label("answered"),
+
             func.sum(
-                func.case(
+                case(
                     (
                         AIInteraction.refused.is_(True),
                         1,
@@ -173,12 +176,14 @@ def get_ai_analytics(
                     else_=0,
                 )
             ).label("refused"),
+
             func.coalesce(
                 func.sum(
                     AIInteraction.total_tokens
                 ),
                 0,
             ).label("total_tokens"),
+
             func.coalesce(
                 func.avg(
                     AIInteraction.latency_ms
@@ -192,6 +197,10 @@ def get_ai_analytics(
         .all()
     )
 
+    # =========================================================
+    # INITIALIZE EXPECTED TYPES
+    # =========================================================
+
     breakdown = {
         assistance_type: {
             "questions": 0,
@@ -203,11 +212,16 @@ def get_ai_analytics(
         for assistance_type in EXPECTED_TYPES
     }
 
+    # =========================================================
+    # FILL BREAKDOWN
+    # =========================================================
+
     for row in grouped:
 
         assistance_type = row.assistance_type
 
         if assistance_type not in breakdown:
+
             breakdown[assistance_type] = {
                 "questions": 0,
                 "answered": 0,
@@ -220,15 +234,19 @@ def get_ai_analytics(
             "questions": int(
                 row.questions or 0
             ),
+
             "answered": int(
                 row.answered or 0
             ),
+
             "refused": int(
                 row.refused or 0
             ),
+
             "total_tokens": int(
                 row.total_tokens or 0
             ),
+
             "average_latency_ms": round(
                 float(
                     row.average_latency_ms or 0
@@ -237,30 +255,40 @@ def get_ai_analytics(
             ),
         }
 
+    # =========================================================
+    # RETURN ANALYTICS
+    # =========================================================
+
     return {
         "total_questions": int(
             total_questions
         ),
+
         "answered": int(
             answered
         ),
+
         "refused": int(
             refused
         ),
+
         "average_latency_ms": round(
             float(
                 average_latency_ms
             ),
             2,
         ),
+
         "p95_latency_ms": round(
             float(
                 p95_latency_ms
             ),
             2,
         ),
+
         "total_tokens": int(
             total_tokens
         ),
+
         "breakdown": breakdown,
     }
