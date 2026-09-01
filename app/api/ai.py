@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from groq import APIConnectionError
 
 from app.api.dependencies import get_current_user
-from app.core.observability import correlation_id as request_correlation_id
+
 from app.db.database import get_db
 from app.llm import GroqLLMProvider
 
@@ -30,6 +30,13 @@ from app.schemas.ai import (
     AISource,
 )
 
+from app.core.observability import (
+    correlation_id as request_correlation_id,
+    AI_CALLS,
+    AI_FAILURES,
+    AI_LATENCY,
+)
+
 from app.services.content_chunk_service import search_content_chunks
 
 
@@ -39,24 +46,26 @@ router = APIRouter(
 )
 
 
+# =========================================================
+# SSE HELPER
+# =========================================================
+
 def sse_event(
     event_type: str,
     data: dict,
 ) -> str:
     """
     Build a Server-Sent Event frame.
-
-    Example:
-
-    event: text
-    data: {"content": "Hello"}
-
     """
     return (
         f"event: {event_type}\n"
         f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
     )
 
+
+# =========================================================
+# ASSISTANT ENDPOINT
+# =========================================================
 
 @router.post("/ask")
 async def ask_assistant(
@@ -142,6 +151,7 @@ async def ask_assistant(
         db.commit()
 
         async def missing_order_id_stream():
+
             yield sse_event(
                 "text",
                 {
@@ -246,7 +256,9 @@ async def ask_assistant(
 
             history_lines.append(line)
 
-        history_context = "\n".join(history_lines)
+        history_context = "\n".join(
+            history_lines
+        )
 
         if not history_context:
             history_context = (
@@ -351,12 +363,31 @@ async def ask_assistant(
                     )
 
                 # -------------------------------------------------
-                # PERSIST COMPLETED INTERACTION
+                # LATENCY
                 # -------------------------------------------------
 
                 latency_ms = int(
                     (time.perf_counter() - start_time) * 1000
                 )
+
+                # -------------------------------------------------
+                # AI PROMETHEUS METRICS
+                # -------------------------------------------------
+
+                AI_CALLS.labels(
+                    assistance_type="order_explanation",
+                    status="success",
+                ).inc()
+
+                AI_LATENCY.labels(
+                    assistance_type="order_explanation",
+                ).observe(
+                    latency_ms / 1000
+                )
+
+                # -------------------------------------------------
+                # PERSIST INTERACTION
+                # -------------------------------------------------
 
                 interaction = AIInteraction(
                     user_id=current_user.user_id,
@@ -381,7 +412,7 @@ async def ask_assistant(
                 db.commit()
 
                 # -------------------------------------------------
-                # CITATIONS / METADATA EVENT
+                # CITATIONS / METADATA
                 # -------------------------------------------------
 
                 yield sse_event(
@@ -393,7 +424,7 @@ async def ask_assistant(
                 )
 
                 # -------------------------------------------------
-                # DONE EVENT
+                # DONE
                 # -------------------------------------------------
 
                 yield sse_event(
@@ -405,11 +436,6 @@ async def ask_assistant(
 
                 # -------------------------------------------------
                 # CLIENT DISCONNECTED
-                # -------------------------------------------------
-                #
-                # Save whatever text was generated before the
-                # client disconnected.
-                #
                 # -------------------------------------------------
 
                 latency_ms = int(
@@ -443,6 +469,25 @@ async def ask_assistant(
                 raise
 
             except APIConnectionError:
+
+                latency_ms = int(
+                    (time.perf_counter() - start_time) * 1000
+                )
+
+                AI_CALLS.labels(
+                    assistance_type="order_explanation",
+                    status="failure",
+                ).inc()
+
+                AI_FAILURES.labels(
+                    assistance_type="order_explanation",
+                ).inc()
+
+                AI_LATENCY.labels(
+                    assistance_type="order_explanation",
+                ).observe(
+                    latency_ms / 1000
+                )
 
                 yield sse_event(
                     "error",
@@ -700,12 +745,31 @@ async def ask_assistant(
                 )
 
             # -------------------------------------------------
-            # PERSIST COMPLETED INTERACTION
+            # LATENCY
             # -------------------------------------------------
 
             latency_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
+
+            # -------------------------------------------------
+            # AI PROMETHEUS METRICS
+            # -------------------------------------------------
+
+            AI_CALLS.labels(
+                assistance_type="discovery",
+                status="success",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="discovery",
+            ).observe(
+                latency_ms / 1000
+            )
+
+            # -------------------------------------------------
+            # PERSIST INTERACTION
+            # -------------------------------------------------
 
             interaction = AIInteraction(
                 user_id=current_user.user_id,
@@ -730,7 +794,7 @@ async def ask_assistant(
             db.commit()
 
             # -------------------------------------------------
-            # CITATIONS EVENT
+            # CITATIONS
             # -------------------------------------------------
 
             yield sse_event(
@@ -744,7 +808,7 @@ async def ask_assistant(
             )
 
             # -------------------------------------------------
-            # DONE EVENT
+            # DONE
             # -------------------------------------------------
 
             yield sse_event(
@@ -756,10 +820,6 @@ async def ask_assistant(
 
             # -------------------------------------------------
             # CLIENT DISCONNECTED
-            # -------------------------------------------------
-            #
-            # Persist partial generated text.
-            #
             # -------------------------------------------------
 
             latency_ms = int(
@@ -794,6 +854,25 @@ async def ask_assistant(
 
         except APIConnectionError:
 
+            latency_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
+
+            AI_CALLS.labels(
+                assistance_type="discovery",
+                status="failure",
+            ).inc()
+
+            AI_FAILURES.labels(
+                assistance_type="discovery",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="discovery",
+            ).observe(
+                latency_ms / 1000
+            )
+
             yield sse_event(
                 "error",
                 {
@@ -803,6 +882,10 @@ async def ask_assistant(
                     )
                 },
             )
+
+    # =========================================================
+    # RETURN SSE RESPONSE
+    # =========================================================
 
     return StreamingResponse(
         discovery_stream(),

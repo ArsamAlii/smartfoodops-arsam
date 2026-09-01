@@ -13,9 +13,14 @@ from groq import APIConnectionError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_role
+
 from app.core.observability import (
     correlation_id as request_correlation_id,
+    AI_CALLS,
+    AI_FAILURES,
+    AI_LATENCY,
 )
+
 from app.db.database import get_db
 from app.llm import GroqLLMProvider
 
@@ -48,13 +53,16 @@ router = APIRouter(
 
 
 # =============================================================
-# SSE
+# SSE HELPER
 # =============================================================
 
 def sse_event(
     event_type: str,
     data: dict,
 ) -> str:
+    """
+    Build a Server-Sent Event frame.
+    """
     return (
         f"event: {event_type}\n"
         f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -70,6 +78,10 @@ def get_owned_restaurant(
     db: Session,
     current_user: User,
 ) -> Restaurant:
+    """
+    Ensure the authenticated user is a restaurant admin
+    who owns the requested restaurant.
+    """
 
     restaurant = db.get(
         Restaurant,
@@ -94,11 +106,22 @@ def get_owned_restaurant(
 # =============================================================
 # BUILD RESTAURANT CONTEXT
 # =============================================================
+
 def build_restaurant_context(
     restaurant: Restaurant,
     db: Session,
     menu_item_id: int | None = None,
 ) -> tuple[str, int | None]:
+    """
+    Build grounded restaurant/menu context.
+
+    MenuItem belongs to MenuCategory, and MenuCategory belongs
+    to Restaurant. Therefore we traverse:
+
+        Restaurant
+            -> categories
+                -> menu_items
+    """
 
     categories = sorted(
         restaurant.categories,
@@ -108,12 +131,18 @@ def build_restaurant_context(
         ),
     )
 
+    # ---------------------------------------------------------
+    # Specific menu item
+    # ---------------------------------------------------------
+
     if menu_item_id is not None:
 
         selected_item = None
 
         for category in categories:
+
             for item in category.menu_items:
+
                 if item.menu_item_id == menu_item_id:
                     selected_item = item
                     break
@@ -123,7 +152,7 @@ def build_restaurant_context(
 
         if selected_item is None:
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
                     "Menu item not found in this restaurant."
                 ),
@@ -154,57 +183,8 @@ def build_restaurant_context(
             selected_item.menu_item_id,
         )
 
-    lines = [
-        f"Restaurant name: {restaurant.name}",
-        f"Cuisine: {restaurant.cuisine}",
-        (
-            "Restaurant description: "
-            f"{restaurant.description or 'N/A'}"
-        ),
-        f"Address: {restaurant.address}",
-        (
-            "Operating hours: "
-            f"{restaurant.operating_hours or 'N/A'}"
-        ),
-        "",
-        "Menu items:",
-    ]
-
-    for category in categories:
-
-        lines.append(
-            f"Category: {category.name}"
-        )
-
-        items = sorted(
-            category.menu_items,
-            key=lambda item: (
-                item.order_index,
-                item.menu_item_id,
-            ),
-        )
-
-        for item in items:
-
-            lines.append(
-                (
-                    f"- Name: {item.name} | "
-                    f"Description: "
-                    f"{item.description or 'N/A'} | "
-                    f"Price: {item.price} | "
-                    f"Available: "
-                    f"{'Yes' if item.is_available else 'No'} | "
-                    f"Stock: {item.stock}"
-                )
-            )
-
-    return (
-        "\n".join(lines),
-        None,
-    )
-
     # ---------------------------------------------------------
-    # Whole restaurant context
+    # Whole restaurant
     # ---------------------------------------------------------
 
     lines = [
@@ -270,6 +250,9 @@ def save_generated_content(
     prompt_version: str,
     model: str,
 ) -> GeneratedContent:
+    """
+    Persist generated restaurant content.
+    """
 
     generated = GeneratedContent(
         restaurant_id=restaurant_id,
@@ -360,6 +343,25 @@ async def generate_description(
                 (time.perf_counter() - start_time) * 1000
             )
 
+            # -------------------------------------------------
+            # PROMETHEUS
+            # -------------------------------------------------
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="success",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
+
+            # -------------------------------------------------
+            # SAVE GENERATED CONTENT
+            # -------------------------------------------------
+
             save_generated_content(
                 db=db,
                 restaurant_id=restaurant.restaurant_id,
@@ -371,6 +373,10 @@ async def generate_description(
                 ),
                 model=llm.model,
             )
+
+            # -------------------------------------------------
+            # SAVE AI INTERACTION
+            # -------------------------------------------------
 
             db.add(
                 AIInteraction(
@@ -394,6 +400,10 @@ async def generate_description(
 
             db.commit()
 
+            # -------------------------------------------------
+            # METADATA
+            # -------------------------------------------------
+
             yield sse_event(
                 "metadata",
                 {
@@ -405,6 +415,10 @@ async def generate_description(
                 },
             )
 
+            # -------------------------------------------------
+            # DONE
+            # -------------------------------------------------
+
             yield sse_event(
                 "done",
                 {},
@@ -412,13 +426,15 @@ async def generate_description(
 
         except asyncio.CancelledError:
 
+            # -------------------------------------------------
+            # CLIENT DISCONNECT
+            # -------------------------------------------------
+
             if generated_text:
 
                 save_generated_content(
                     db=db,
-                    restaurant_id=(
-                        restaurant.restaurant_id
-                    ),
+                    restaurant_id=restaurant.restaurant_id,
                     menu_item_id=menu_item_id,
                     content_type="description",
                     content=generated_text,
@@ -431,6 +447,25 @@ async def generate_description(
             raise
 
         except APIConnectionError:
+
+            latency_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="failure",
+            ).inc()
+
+            AI_FAILURES.labels(
+                assistance_type="restaurant_content",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
 
             yield sse_event(
                 "error",
@@ -451,6 +486,7 @@ async def generate_description(
             "X-Accel-Buffering": "no",
         },
     )
+
 
 # =============================================================
 # PROMO
@@ -524,6 +560,25 @@ async def generate_promo(
                 (time.perf_counter() - start_time) * 1000
             )
 
+            # -------------------------------------------------
+            # PROMETHEUS
+            # -------------------------------------------------
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="success",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
+
+            # -------------------------------------------------
+            # SAVE GENERATED CONTENT
+            # -------------------------------------------------
+
             save_generated_content(
                 db=db,
                 restaurant_id=restaurant.restaurant_id,
@@ -536,12 +591,14 @@ async def generate_promo(
                 model=llm.model,
             )
 
+            # -------------------------------------------------
+            # SAVE AI INTERACTION
+            # -------------------------------------------------
+
             db.add(
                 AIInteraction(
                     user_id=current_user.user_id,
-                    question=(
-                        "Restaurant promo generation"
-                    ),
+                    question="Restaurant promo generation",
                     assistance_type="restaurant_content",
                     retrieved_chunk_ids=[],
                     order_id=None,
@@ -558,13 +615,23 @@ async def generate_promo(
 
             db.commit()
 
+            # -------------------------------------------------
+            # METADATA
+            # -------------------------------------------------
+
             yield sse_event(
                 "metadata",
                 {
                     "content_type": "promo",
-                    "restaurant_id": restaurant.restaurant_id,
+                    "restaurant_id": (
+                        restaurant.restaurant_id
+                    ),
                 },
             )
+
+            # -------------------------------------------------
+            # DONE
+            # -------------------------------------------------
 
             yield sse_event(
                 "done",
@@ -591,6 +658,25 @@ async def generate_promo(
 
         except APIConnectionError:
 
+            latency_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="failure",
+            ).inc()
+
+            AI_FAILURES.labels(
+                assistance_type="restaurant_content",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
+
             yield sse_event(
                 "error",
                 {
@@ -607,7 +693,7 @@ async def generate_promo(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
+            "X-Accel-Buffering": "no-cache",
         },
     )
 
@@ -655,7 +741,7 @@ async def generate_highlights(
     correlation_id = request_correlation_id.get()
 
     # ---------------------------------------------------------
-    # First generation
+    # FIRST LLM GENERATION
     # ---------------------------------------------------------
 
     try:
@@ -681,6 +767,25 @@ async def generate_highlights(
 
     except APIConnectionError:
 
+        latency_ms = int(
+            (time.perf_counter() - start_time) * 1000
+        )
+
+        AI_CALLS.labels(
+            assistance_type="restaurant_content",
+            status="failure",
+        ).inc()
+
+        AI_FAILURES.labels(
+            assistance_type="restaurant_content",
+        ).inc()
+
+        AI_LATENCY.labels(
+            assistance_type="restaurant_content",
+        ).observe(
+            latency_ms / 1000
+        )
+
         raise HTTPException(
             status_code=503,
             detail=(
@@ -690,7 +795,7 @@ async def generate_highlights(
         )
 
     # ---------------------------------------------------------
-    # Validate first response
+    # VALIDATE FIRST RESPONSE
     # ---------------------------------------------------------
 
     try:
@@ -724,7 +829,7 @@ async def generate_highlights(
                 system_prompt=(
                     "You are repairing malformed JSON. "
                     "Return ONLY valid JSON matching the "
-                    "requested schema."
+                    "requested highlights schema."
                 ),
                 user_prompt=repair_prompt,
             ):
@@ -743,7 +848,55 @@ async def generate_highlights(
                 repaired_parsed
             )
 
+        except APIConnectionError:
+
+            latency_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="failure",
+            ).inc()
+
+            AI_FAILURES.labels(
+                assistance_type="restaurant_content",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
+
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI service is temporarily unavailable. "
+                    "Please try again."
+                ),
+            )
+
         except Exception:
+
+            latency_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="failure",
+            ).inc()
+
+            AI_FAILURES.labels(
+                assistance_type="restaurant_content",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
 
             raise HTTPException(
                 status_code=502,
@@ -754,7 +907,7 @@ async def generate_highlights(
             )
 
     # ---------------------------------------------------------
-    # Validated result
+    # VALIDATED RESULT
     # ---------------------------------------------------------
 
     validated_json = validated.model_dump()
@@ -791,6 +944,25 @@ async def generate_highlights(
                 (time.perf_counter() - start_time) * 1000
             )
 
+            # -------------------------------------------------
+            # PROMETHEUS
+            # -------------------------------------------------
+
+            AI_CALLS.labels(
+                assistance_type="restaurant_content",
+                status="success",
+            ).inc()
+
+            AI_LATENCY.labels(
+                assistance_type="restaurant_content",
+            ).observe(
+                latency_ms / 1000
+            )
+
+            # -------------------------------------------------
+            # SAVE GENERATED CONTENT
+            # -------------------------------------------------
+
             save_generated_content(
                 db=db,
                 restaurant_id=restaurant.restaurant_id,
@@ -802,6 +974,10 @@ async def generate_highlights(
                 ),
                 model=llm.model,
             )
+
+            # -------------------------------------------------
+            # SAVE AI INTERACTION
+            # -------------------------------------------------
 
             db.add(
                 AIInteraction(
@@ -828,6 +1004,10 @@ async def generate_highlights(
 
             db.commit()
 
+            # -------------------------------------------------
+            # METADATA
+            # -------------------------------------------------
+
             yield sse_event(
                 "metadata",
                 {
@@ -838,6 +1018,10 @@ async def generate_highlights(
                     "validated": True,
                 },
             )
+
+            # -------------------------------------------------
+            # DONE
+            # -------------------------------------------------
 
             yield sse_event(
                 "done",
