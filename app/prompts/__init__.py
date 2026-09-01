@@ -1,7 +1,23 @@
 from app.prompts.discovery import PROMPT_DISCOVERY_V1
 from app.prompts.order_explanation import PROMPT_ORDER_EXPLAIN_V1
 
+
+from app.prompts.discovery import PROMPT_DISCOVERY_V1
+from app.prompts.order_explanation import PROMPT_ORDER_EXPLAIN_V1
+
+from app.prompts.restaurant_generation import (
+    PROMPT_RESTAURANT_DESCRIPTION_V1,
+    PROMPT_RESTAURANT_PROMO_V1,
+    PROMPT_RESTAURANT_HIGHLIGHTS_V1,
+    PROMPT_RESTAURANT_HIGHLIGHTS_REPAIR_V1,
+)
+
+
 __all__ = [
     "PROMPT_DISCOVERY_V1",
     "PROMPT_ORDER_EXPLAIN_V1",
+    "PROMPT_RESTAURANT_DESCRIPTION_V1",
+    "PROMPT_RESTAURANT_PROMO_V1",
+    "PROMPT_RESTAURANT_HIGHLIGHTS_V1",
+    "PROMPT_RESTAURANT_HIGHLIGHTS_REPAIR_V1",
 ]

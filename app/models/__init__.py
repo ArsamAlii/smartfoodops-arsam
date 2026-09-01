@@ -13,3 +13,4 @@ from .refund import Refund
 from .settlement import Settlement
 from .analytics import AnalyticsDaily
 from .ai_interaction import AIInteraction
+from .generated_content import GeneratedContent

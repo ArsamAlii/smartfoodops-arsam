@@ -41,6 +41,7 @@ from app.db.database import SessionLocal
 from app.api.analytics import router as analytics_router
 from app.api.search import router as search_router
 from app.api.ai import router as ai_router
+from app.api.restaurant_generation import router as restaurant_generation_router
 # Base.metadata.create_all(bind=engine)
 
 
@@ -84,6 +85,7 @@ app.include_router(celery_router)
 app.include_router(analytics_router)
 app.include_router(search_router)
 app.include_router(ai_router)
+app.include_router(restaurant_generation_router)
 # -------------------------------------------------------
 # Root
 # -------------------------------------------------------
