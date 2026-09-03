@@ -32,7 +32,7 @@ class OrderWorkflow:
     ) -> str:
 
         # ---------------------------------------------------
-        # 1. Get current status from PostgreSQL
+        # Get current status
         # ---------------------------------------------------
 
         self.current_status = await workflow.execute_activity(
@@ -48,19 +48,28 @@ class OrderWorkflow:
             f"with status '{self.current_status}'"
         )
 
-        # Order creation has already made an idempotent payment-authorisation
-        # record. Project that durable result through the workflow before
-        # waiting for the restaurant's accept/reject signal.
+        # ---------------------------------------------------
+        # Automatic payment confirmation
+        # ---------------------------------------------------
+
         if self.current_status == "placed":
+
             await workflow.execute_activity(
                 update_order_status,
-                args=[order_id, "placed", "payment_confirmed"],
-                start_to_close_timeout=timedelta(seconds=30),
+                args=[
+                    order_id,
+                    "placed",
+                    "payment_confirmed",
+                ],
+                start_to_close_timeout=timedelta(
+                    seconds=30
+                ),
             )
+
             self.current_status = "payment_confirmed"
 
         # ---------------------------------------------------
-        # 2. Normal order transitions
+        # Normal transitions
         # ---------------------------------------------------
 
         allowed_transitions = {
@@ -73,8 +82,6 @@ class OrderWorkflow:
 
             "preparing": "ready",
 
-            "ready": "assigned",
-
             "assigned": "picked_up",
 
             "picked_up": "delivered",
@@ -83,7 +90,7 @@ class OrderWorkflow:
         }
 
         # ---------------------------------------------------
-        # 3. Process status signals
+        # Process signals
         # ---------------------------------------------------
 
         while self.current_status != "completed":
@@ -107,10 +114,6 @@ class OrderWorkflow:
                 "rejected",
             }:
 
-                # ---------------------------------------------
-                # Cancellation allowed before fulfilment
-                # ---------------------------------------------
-
                 cancellable_statuses = {
                     "placed",
                     "payment_confirmed",
@@ -121,31 +124,12 @@ class OrderWorkflow:
                     self.current_status
                     not in cancellable_statuses
                 ):
-
                     workflow.logger.warning(
                         f"Order {order_id}: "
                         f"cannot cancel/reject from "
                         f"'{self.current_status}'"
                     )
-
                     continue
-
-                workflow.logger.info(
-                    f"Order {order_id}: "
-                    f"processing cancellation "
-                    f"from '{self.current_status}'"
-                )
-
-                # ---------------------------------------------
-                # Cancellation activity performs ALL operations
-                # atomically:
-                #
-                # 1. Verify current status
-                # 2. Release stock
-                # 3. Refund payment
-                # 4. Set status to cancelled
-                # 5. Create status history
-                # ---------------------------------------------
 
                 await workflow.execute_activity(
                     cancel_order,
@@ -161,15 +145,61 @@ class OrderWorkflow:
 
                 self.current_status = new_status
 
-                workflow.logger.info(
-                    f"Order {order_id}: "
-                    f"cancellation completed"
-                )
-
                 return (
                     f"Order {order_id} "
                     f"was {new_status}"
                 )
+
+            # =================================================
+            # AUTOMATIC DISPATCH
+            #
+            # READY → ASSIGNED
+            #
+            # This is a dispatch request.
+            #
+            # We DO NOT directly update the order to ASSIGNED.
+            # The assignment activity atomically assigns the
+            # rider and changes the database status.
+            # =================================================
+
+            if (
+                self.current_status == "ready"
+                and new_status == "assigned"
+            ):
+
+                workflow.logger.info(
+                    f"Order {order_id}: "
+                    f"attempting automatic rider assignment"
+                )
+
+                rider_id = await workflow.execute_activity(
+                    assign_rider,
+                    order_id,
+                    start_to_close_timeout=timedelta(
+                        seconds=30
+                    ),
+                )
+
+                if rider_id is None:
+
+                    workflow.logger.info(
+                        f"Order {order_id}: "
+                        f"no rider available. "
+                        f"Order remains READY."
+                    )
+
+                    self.current_status = "ready"
+
+                else:
+
+                    workflow.logger.info(
+                        f"Order {order_id}: "
+                        f"rider {rider_id} assigned"
+                    )
+
+                    self.current_status = "assigned"
+
+                continue
 
             # =================================================
             # NORMAL STATUS TRANSITION
@@ -198,18 +228,7 @@ class OrderWorkflow:
                 continue
 
             # -------------------------------------------------
-            # Log transition
-            # -------------------------------------------------
-
-            workflow.logger.info(
-                f"Order {order_id}: "
-                f"transitioning "
-                f"'{self.current_status}' "
-                f"-> '{new_status}'"
-            )
-
-            # -------------------------------------------------
-            # Update PostgreSQL through Activity
+            # Update PostgreSQL through activity
             # -------------------------------------------------
 
             await workflow.execute_activity(
@@ -225,19 +244,10 @@ class OrderWorkflow:
             )
 
             # -------------------------------------------------
-            # Update workflow state only after DB succeeds
+            # Update workflow state
             # -------------------------------------------------
 
             self.current_status = new_status
-
-            if new_status == "ready":
-                rider_id = await workflow.execute_activity(
-                    assign_rider,
-                    order_id,
-                    start_to_close_timeout=timedelta(seconds=30),
-                )
-                if rider_id is not None:
-                    self.current_status = "assigned"
 
             workflow.logger.info(
                 f"Order {order_id}: "
@@ -247,7 +257,7 @@ class OrderWorkflow:
             )
 
         # ---------------------------------------------------
-        # Workflow completed normally
+        # Workflow completed
         # ---------------------------------------------------
 
         await workflow.wait_condition(
@@ -277,7 +287,4 @@ class OrderWorkflow:
             f"received status signal '{status}'"
         )
 
-        self.requested_statuses.append(
-            status
-        )
-
+        self.requested_statuses.append(status)

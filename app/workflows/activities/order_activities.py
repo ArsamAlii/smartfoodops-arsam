@@ -6,11 +6,11 @@ from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.payment import Payment
 from app.models.menu_item import MenuItem
-from app.models.order_status_history import (
-    OrderStatusHistory,
-)
+from app.models.order_status_history import OrderStatusHistory
 from app.models.refund import Refund
 from app.models.settlement import Settlement
+from app.models.users import User
+
 from app.services.rider_assignment_service import assign_available_rider
 
 
@@ -23,19 +23,14 @@ async def validate_order_workflow(
     order_id: int,
 ) -> str:
 
-    print(
-        f"Activity: validating order {order_id}"
-    )
+    print(f"Activity: validating order {order_id}")
 
     db = SessionLocal()
 
     try:
-
         order = (
             db.query(Order)
-            .filter(
-                Order.order_id == order_id
-            )
+            .filter(Order.order_id == order_id)
             .first()
         )
 
@@ -52,7 +47,6 @@ async def validate_order_workflow(
         return order.status
 
     finally:
-
         db.close()
 
 
@@ -83,9 +77,7 @@ async def update_order_status(
 
         order = (
             db.query(Order)
-            .filter(
-                Order.order_id == order_id
-            )
+            .filter(Order.order_id == order_id)
             .with_for_update()
             .first()
         )
@@ -100,7 +92,6 @@ async def update_order_status(
         # ---------------------------------------------------
 
         if order.status != expected_status:
-
             raise ValueError(
                 f"Order {order_id} is currently "
                 f"'{order.status}', expected "
@@ -126,17 +117,73 @@ async def update_order_status(
             actor="workflow",
         )
 
-        if new_status == "completed" and not db.query(Settlement).filter(Settlement.order_id == order_id).first():
-            db.add(Settlement(
-                order_id=order_id,
-                restaurant_amount=order.total_amount,
-                rider_amount=0,
-            ))
-
         db.add(status_history)
 
+        # ===================================================
+        # COMPLETED
+        #
+        # When an order is completed:
+        #
+        # 1. Create settlement
+        # 2. Release the rider
+        #
+        # Both happen in the same DB transaction.
+        # ===================================================
+
+        if new_status == "completed":
+
+            # ------------------------------------------------
+            # Create settlement only once
+            # ------------------------------------------------
+
+            existing_settlement = (
+                db.query(Settlement)
+                .filter(
+                    Settlement.order_id == order_id
+                )
+                .first()
+            )
+
+            if existing_settlement is None:
+
+                db.add(
+                    Settlement(
+                        order_id=order_id,
+                        restaurant_amount=order.total_amount,
+                        rider_amount=0,
+                    )
+                )
+
+            # ------------------------------------------------
+            # Release rider
+            #
+            # Lock rider row before changing availability.
+            # ------------------------------------------------
+
+            if order.rider_id is not None:
+
+                rider = (
+                    db.query(User)
+                    .filter(
+                        User.user_id == order.rider_id,
+                        User.role == "rider",
+                    )
+                    .with_for_update()
+                    .first()
+                )
+
+                if rider is not None:
+
+                    rider.is_available = True
+
+                    print(
+                        f"Activity: rider {rider.user_id} "
+                        f"is now AVAILABLE after "
+                        f"completing order {order_id}"
+                    )
+
         # ---------------------------------------------------
-        # Commit atomically
+        # Commit everything atomically
         # ---------------------------------------------------
 
         db.commit()
@@ -155,13 +202,12 @@ async def update_order_status(
         )
 
     except Exception:
-
         db.rollback()
         raise
 
     finally:
-
         db.close()
+
 
 # ===========================================================
 # Cancel / Reject Order
@@ -191,9 +237,7 @@ async def cancel_order(
 
         order = (
             db.query(Order)
-            .filter(
-                Order.order_id == order_id
-            )
+            .filter(Order.order_id == order_id)
             .with_for_update()
             .first()
         )
@@ -212,11 +256,6 @@ async def cancel_order(
             "rejected",
         }:
 
-            print(
-                f"Activity: order {order_id} "
-                f"is already '{order.status}'"
-            )
-
             return (
                 f"Order {order_id} "
                 f"is already '{order.status}'"
@@ -227,7 +266,6 @@ async def cancel_order(
         # ---------------------------------------------------
 
         if order.status != expected_status:
-
             raise ValueError(
                 f"Order {order_id} is currently "
                 f"'{order.status}', expected "
@@ -242,7 +280,6 @@ async def cancel_order(
             "cancelled",
             "rejected",
         }:
-
             raise ValueError(
                 f"Invalid cancellation status: "
                 f"'{new_status}'"
@@ -275,7 +312,6 @@ async def cancel_order(
             )
 
             if menu_item is None:
-
                 raise ValueError(
                     f"Menu item "
                     f"{order_item.menu_item_id} "
@@ -284,13 +320,6 @@ async def cancel_order(
 
             if menu_item.stock is not None:
                 menu_item.stock += order_item.quantity
-
-            print(
-                f"Activity: released "
-                f"{order_item.quantity} units "
-                f"of menu item "
-                f"{order_item.menu_item_id}"
-            )
 
         # ===================================================
         # 2. Refund Payment
@@ -311,43 +340,44 @@ async def cancel_order(
 
                 payment.payment_status = "refunded"
 
-                db.add(Refund(
-                    payment_id=payment.payment_id,
-                    amount=payment.final_amount,
-                    reason=new_status,
-                ))
-
-                print(
-                    f"Activity: payment "
-                    f"{payment.payment_id} "
-                    f"refunded"
+                db.add(
+                    Refund(
+                        payment_id=payment.payment_id,
+                        amount=payment.final_amount,
+                        reason=new_status,
+                    )
                 )
 
             elif payment.payment_status == "refunded":
-
-                print(
-                    f"Activity: payment "
-                    f"{payment.payment_id} "
-                    f"is already refunded"
-                )
-
-            else:
-
-                print(
-                    f"Activity: payment "
-                    f"{payment.payment_id} "
-                    f"has status "
-                    f"'{payment.payment_status}'"
-                )
+                pass
 
         # ===================================================
-        # 3. Change Order Status
+        # 3. Release Rider if necessary
+        # ===================================================
+
+        if order.rider_id is not None:
+
+            rider = (
+                db.query(User)
+                .filter(
+                    User.user_id == order.rider_id,
+                    User.role == "rider",
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if rider is not None:
+                rider.is_available = True
+
+        # ===================================================
+        # 4. Change Order Status
         # ===================================================
 
         order.status = new_status
 
         # ===================================================
-        # 4. Create Status History
+        # 5. Create Status History
         # ===================================================
 
         status_history = OrderStatusHistory(
@@ -361,17 +391,12 @@ async def cancel_order(
         db.add(status_history)
 
         # ===================================================
-        # 5. Commit Everything Atomically
+        # 6. Commit Everything Atomically
         # ===================================================
 
         db.commit()
 
         db.refresh(order)
-
-        print(
-            f"Activity completed: order {order_id} "
-            f"is now '{order.status}'"
-        )
 
         return (
             f"Order {order_id} changed "
@@ -381,23 +406,38 @@ async def cancel_order(
         )
 
     except Exception:
-
         db.rollback()
         raise
 
     finally:
-
         db.close()
 
 
+# ===========================================================
+# Automatic Rider Assignment
+# ===========================================================
+
 @activity.defn
-async def assign_rider(order_id: int) -> int | None:
-    """Dispatch is retry-safe because an already assigned order is returned."""
+async def assign_rider(
+    order_id: int,
+) -> int | None:
+
+    """Atomically assign an available rider.
+
+    Safe for Temporal retries and concurrent dispatchers.
+    """
+
     db = SessionLocal()
+
     try:
-        return assign_available_rider(db, order_id)
+        return assign_available_rider(
+            db,
+            order_id,
+        )
+
     except Exception:
         db.rollback()
         raise
+
     finally:
         db.close()

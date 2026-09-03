@@ -7,26 +7,27 @@ from app.db.database import SessionLocal
 from app.models.order import Order
 from app.models.analytics import AnalyticsDaily
 from app.models.failed_jobs import FailedJob
-from app.services.rider_assignment_service import assign_available_rider
+
+from app.workflows.temporal_client import signal_order_workflow
 
 
 @celery_app.task
 def analytics_rollup():
+
     print("Running periodic analytics rollup")
 
     db = SessionLocal()
 
     try:
+
         today = datetime.utcnow().date()
         today_string = today.isoformat()
 
-        # ---------------------------------------------------
-        # Order aggregates
-        # ---------------------------------------------------
-
         total_orders = (
             db.query(func.count(Order.order_id))
-            .filter(func.date(Order.created_at) == today)
+            .filter(
+                func.date(Order.created_at) == today
+            )
             .scalar()
             or 0
         )
@@ -52,7 +53,12 @@ def analytics_rollup():
         )
 
         total_revenue = (
-            db.query(func.coalesce(func.sum(Order.total_amount), 0))
+            db.query(
+                func.coalesce(
+                    func.sum(Order.total_amount),
+                    0,
+                )
+            )
             .filter(
                 func.date(Order.created_at) == today,
                 Order.status == "completed",
@@ -67,32 +73,29 @@ def analytics_rollup():
             else 0
         )
 
-        # ---------------------------------------------------
-        # Failed events
-        # ---------------------------------------------------
-
         failed_events = (
-            db.query(func.count(FailedJob.task_id))
+            db.query(
+                func.count(FailedJob.task_id)
+            )
             .scalar()
             or 0
         )
 
-        # ---------------------------------------------------
-        # Upsert daily aggregate
-        # ---------------------------------------------------
-
         analytics = (
             db.query(AnalyticsDaily)
             .filter(
-                AnalyticsDaily.analytics_date == today_string
+                AnalyticsDaily.analytics_date
+                == today_string
             )
             .first()
         )
 
         if analytics is None:
+
             analytics = AnalyticsDaily(
                 analytics_date=today_string
             )
+
             db.add(analytics)
 
         analytics.total_orders = total_orders
@@ -122,13 +125,19 @@ def analytics_rollup():
             "completed_orders": completed_orders,
             "cancelled_orders": cancelled_orders,
             "total_revenue": float(total_revenue),
-            "average_order_value": float(average_order_value),
+            "average_order_value": float(
+                average_order_value
+            ),
             "failed_events": failed_events,
         }
 
     finally:
         db.close()
 
+
+# ===========================================================
+# Requeue Waiting Orders
+# ===========================================================
 
 @celery_app.task(
     bind=True,
@@ -137,28 +146,64 @@ def analytics_rollup():
     max_retries=3,
 )
 def requeue_waiting_orders(self):
-    """Retry dispatch for READY orders; no rider means the order remains queued."""
+
+    """Ask Temporal to retry rider assignment for READY orders."""
 
     db = SessionLocal()
 
     try:
+
         order_ids = [
             row[0]
-            for row in db.query(Order.order_id)
-            .filter(Order.status == "ready")
-            .all()
+            for row in (
+                db.query(Order.order_id)
+                .filter(
+                    Order.status == "ready"
+                )
+                .all()
+            )
         ]
 
-        assigned = 0
-
-        for order_id in order_ids:
-            if assign_available_rider(db, order_id) is not None:
-                assigned += 1
-
-        return {
-            "checked": len(order_ids),
-            "assigned": assigned,
-        }
-
     finally:
+
         db.close()
+
+    checked = len(order_ids)
+    signalled = 0
+
+    # -------------------------------------------------------
+    # Tell each READY order's Temporal workflow to retry
+    # dispatch.
+    # -------------------------------------------------------
+
+    for order_id in order_ids:
+
+        try:
+
+            import asyncio
+
+            asyncio.run(
+                signal_order_workflow(
+                    order_id=order_id,
+                    status="assigned",
+                )
+            )
+
+            signalled += 1
+
+            print(
+                f"Requeue: signalled order {order_id} "
+                f"for automatic rider assignment"
+            )
+
+        except Exception as exc:
+
+            print(
+                f"Requeue: could not signal order "
+                f"{order_id}: {exc}"
+            )
+
+    return {
+        "checked": checked,
+        "signalled": signalled,
+    }
