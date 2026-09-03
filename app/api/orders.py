@@ -1,4 +1,3 @@
-```python
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -813,4 +812,3 @@ async def update_order(
         )
 
     return order
-```
