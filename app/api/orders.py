@@ -1,3 +1,4 @@
+```python
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -18,11 +19,13 @@ from app.schemas.order import (
 )
 
 from app.services.order_service import create_order
+from app.services.rider_assignment_service import assign_available_rider
 
 from app.workflows.temporal_client import (
     start_order_workflow,
     signal_order_workflow,
 )
+
 from app.core.observability import ORDERS_PLACED
 
 
@@ -94,6 +97,7 @@ async def create_new_order(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only customers can place orders.",
             )
+
         order = create_order(
             db=db,
             customer_id=current_user.user_id,
@@ -414,19 +418,11 @@ async def update_order(
         )
 
     # =======================================================
-    # RIDER ASSIGNMENT
+    # MANUAL RIDER ASSIGNMENT
     #
-    # IMPORTANT:
-    #
-    # Rider assignment happens BEFORE the order is allowed
-    # to move to "assigned".
-    #
-    # ready
-    #   ↓
-    # rider assigned
-    #   ↓
-    # assigned
-    #
+    # This remains available for Admin / Restaurant Admin,
+    # but normal order progression does NOT require manually
+    # selecting a rider.
     # =======================================================
 
     if order_data.rider_id is not None:
@@ -473,27 +469,15 @@ async def update_order(
                 )
 
         # ---------------------------------------------------
-        # Cannot assign a rider to a completed/cancelled order
+        # Order must be READY
         # ---------------------------------------------------
 
         if order.status != "ready":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A rider can only be assigned while an order is READY.",
-            )
-
-        if order.status in {
-            "cancelled",
-            "rejected",
-            "completed",
-            "delivered",
-            "picked_up",
-        }:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Cannot assign a rider when order "
-                    f"is '{order.status}'."
+                    "A rider can only be assigned "
+                    "while an order is READY."
                 ),
             )
 
@@ -528,7 +512,7 @@ async def update_order(
             )
 
         # ---------------------------------------------------
-        # If another rider is already assigned
+        # Another rider already assigned
         # ---------------------------------------------------
 
         if (
@@ -548,8 +532,6 @@ async def update_order(
         # ---------------------------------------------------
 
         order.rider_id = rider.user_id
-
-        # Rider becomes unavailable while carrying order
         rider.is_available = False
 
         try:
@@ -570,43 +552,142 @@ async def update_order(
         old_status = order.status
         new_status = order_data.status.value
 
-        # ---------------------------------------------------
-        # Same status
-        # ---------------------------------------------------
-
-        if old_status == new_status:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Order is already in this status.",
-            )
-
         # ===================================================
-        # CRITICAL RIDER CHECK
+        # AUTOMATIC RIDER ASSIGNMENT
         #
-        # An order CANNOT become "assigned" unless it already
-        # has a rider.
+        # IMPORTANT:
+        #
+        # The API does NOT require the user to manually assign
+        # a rider before moving READY → ASSIGNED.
+        #
+        # Instead, the system automatically attempts to claim
+        # an available rider.
+        #
+        # If a rider exists:
+        #
+        #     READY → ASSIGNED
+        #
+        # If no rider exists:
+        #
+        #     READY → READY
+        #              ↓
+        #            queued
+        #              ↓
+        #         Celery retries
+        #
+        # No 400 error is returned when no rider is available.
         # ===================================================
 
         if new_status == "assigned":
 
-            if order.rider_id is None:
+            # ------------------------------------------------
+            # Only Admin / Restaurant Admin can trigger
+            # restaurant-side dispatch.
+            # ------------------------------------------------
+
+            if current_user.role not in (
+                UserRole.ADMIN,
+                UserRole.RESTAURANT_ADMIN,
+            ):
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_403_FORBIDDEN,
                     detail=(
-                        "Cannot set order status to "
-                        "'assigned' because no rider "
-                        "has been assigned. "
-                        "Assign a rider first."
+                        "Only admin or restaurant admin "
+                        "can dispatch an order."
                     ),
                 )
 
-        # ---------------------------------------------------
-        # Rider cannot be removed while assigned
-        # ---------------------------------------------------
+            # ------------------------------------------------
+            # If already assigned, make this request idempotent.
+            # ------------------------------------------------
+
+            if order.status == "assigned":
+                db.refresh(order)
+                return order
+
+            # ------------------------------------------------
+            # Automatic assignment only happens from READY.
+            # ------------------------------------------------
+
+            if order.status != "ready":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Cannot dispatch order from "
+                        f"'{order.status}'. Order must be READY."
+                    ),
+                )
+
+            # ------------------------------------------------
+            # Atomically try to claim an available rider.
+            #
+            # The assignment service:
+            #
+            # - locks the order
+            # - locks an available rider
+            # - marks rider unavailable
+            # - assigns rider to order
+            # - changes order to ASSIGNED
+            # - commits everything together
+            #
+            # If no rider is available, it returns None and
+            # leaves the order in READY state.
+            # ------------------------------------------------
+
+            rider_id = assign_available_rider(
+                db=db,
+                order_id=order.order_id,
+            )
+
+            db.refresh(order)
+
+            # ------------------------------------------------
+            # NO RIDER AVAILABLE
+            #
+            # Do NOT return an error.
+            #
+            # The order remains READY and will be picked up
+            # by the Celery requeue process.
+            # ------------------------------------------------
+
+            if rider_id is None:
+                return order
+
+            # ------------------------------------------------
+            # Rider successfully assigned.
+            #
+            # assign_available_rider() already changed:
+            #
+            #     rider_id
+            #     rider availability
+            #     order status
+            #
+            # and committed the transaction.
+            # ------------------------------------------------
+
+            db.refresh(order)
+            return order
+
+        # ===================================================
+        # Same status
+        #
+        # Make repeated requests harmless instead of producing
+        # unnecessary errors.
+        # ===================================================
+
+        if old_status == new_status:
+            db.refresh(order)
+            return order
+
+        # ===================================================
+        # RIDER REQUIRED FOR PICKUP / DELIVERY
+        #
+        # ASSIGNED is handled automatically above.
+        # PICKED_UP and DELIVERED still require a rider.
+        # ===================================================
 
         if (
             new_status in {
-                "assigned",
                 "picked_up",
                 "delivered",
             }
@@ -677,11 +758,11 @@ async def update_order(
 
             db.refresh(order)
 
-            # READY may immediately advance to ASSIGNED when dispatch finds an
-            # available rider, so both states acknowledge a successful READY
-            # signal.
+            # READY may immediately advance to ASSIGNED when
+            # dispatch finds an available rider.
             if order.status == new_status or (
-                new_status == "ready" and order.status == "assigned"
+                new_status == "ready"
+                and order.status == "assigned"
             ):
                 status_updated = True
                 break
@@ -715,12 +796,14 @@ async def update_order(
     # assigned/picked_up/delivered must ALWAYS have rider.
     # -------------------------------------------------------
 
-    if order.status in {
-        "assigned",
-        "picked_up",
-        "delivered",
-    } and order.rider_id is None:
-
+    if (
+        order.status in {
+            "assigned",
+            "picked_up",
+            "delivered",
+        }
+        and order.rider_id is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
@@ -730,3 +813,4 @@ async def update_order(
         )
 
     return order
+```
