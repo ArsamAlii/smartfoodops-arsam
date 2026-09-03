@@ -13,13 +13,11 @@ from app.workflows.temporal_client import signal_order_workflow
 
 @celery_app.task
 def analytics_rollup():
-
     print("Running periodic analytics rollup")
 
     db = SessionLocal()
 
     try:
-
         today = datetime.utcnow().date()
         today_string = today.isoformat()
 
@@ -84,14 +82,12 @@ def analytics_rollup():
         analytics = (
             db.query(AnalyticsDaily)
             .filter(
-                AnalyticsDaily.analytics_date
-                == today_string
+                AnalyticsDaily.analytics_date == today_string
             )
             .first()
         )
 
         if analytics is None:
-
             analytics = AnalyticsDaily(
                 analytics_date=today_string
             )
@@ -146,13 +142,19 @@ def analytics_rollup():
     max_retries=3,
 )
 def requeue_waiting_orders(self):
+    """
+    Ask Temporal to retry rider assignment for READY orders.
 
-    """Ask Temporal to retry rider assignment for READY orders."""
+    Celery does not directly modify the order or rider.
+    Instead, it signals the Temporal workflow.
+
+    Temporal then executes the assign_rider activity,
+    which performs the actual atomic rider assignment.
+    """
 
     db = SessionLocal()
 
     try:
-
         order_ids = [
             row[0]
             for row in (
@@ -165,7 +167,6 @@ def requeue_waiting_orders(self):
         ]
 
     finally:
-
         db.close()
 
     checked = len(order_ids)
@@ -173,13 +174,12 @@ def requeue_waiting_orders(self):
 
     # -------------------------------------------------------
     # Tell each READY order's Temporal workflow to retry
-    # dispatch.
+    # rider assignment.
     # -------------------------------------------------------
 
     for order_id in order_ids:
 
         try:
-
             import asyncio
 
             asyncio.run(

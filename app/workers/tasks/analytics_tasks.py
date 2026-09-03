@@ -7,7 +7,7 @@ from app.db.database import SessionLocal
 from app.models.order import Order
 from app.models.analytics import AnalyticsDaily
 from app.models.failed_jobs import FailedJob
-from app.services.rider_assignment_service import assign_available_rider
+from app.workflows.temporal_client import signal_order_workflow
 
 
 @celery_app.task
@@ -165,6 +165,10 @@ def analytics_rollup():
         db.close()
 
 
+# ===========================================================
+# Requeue Waiting Orders
+# ===========================================================
+
 @celery_app.task(
     bind=True,
     autoretry_for=(ConnectionError,),
@@ -172,31 +176,66 @@ def analytics_rollup():
     max_retries=3,
 )
 def requeue_waiting_orders(self):
-    """Retry dispatch for READY orders; no rider means the order remains queued."""
+    """
+    Ask Temporal to retry rider assignment for READY orders.
+
+    Celery does not directly modify the order or rider.
+    It signals the Temporal workflow.
+
+    Temporal then executes the assign_rider activity,
+    which performs the actual atomic rider assignment.
+    """
 
     db = SessionLocal()
 
     try:
         order_ids = [
             row[0]
-            for row in db.query(Order.order_id)
-            .filter(Order.status == "ready")
-            .all()
+            for row in (
+                db.query(Order.order_id)
+                .filter(
+                    Order.status == "ready"
+                )
+                .all()
+            )
         ]
-
-        assigned = 0
-
-        for order_id in order_ids:
-            if assign_available_rider(
-                db,
-                order_id,
-            ) is not None:
-                assigned += 1
-
-        return {
-            "checked": len(order_ids),
-            "assigned": assigned,
-        }
 
     finally:
         db.close()
+
+    checked = len(order_ids)
+    signalled = 0
+
+    # -------------------------------------------------------
+    # Tell each READY order's Temporal workflow to retry
+    # rider assignment.
+    # -------------------------------------------------------
+
+    for order_id in order_ids:
+        try:
+            import asyncio
+
+            asyncio.run(
+                signal_order_workflow(
+                    order_id=order_id,
+                    status="assigned",
+                )
+            )
+
+            signalled += 1
+
+            print(
+                f"Requeue: signalled order {order_id} "
+                f"for automatic rider assignment"
+            )
+
+        except Exception as exc:
+            print(
+                f"Requeue: could not signal order "
+                f"{order_id}: {exc}"
+            )
+
+    return {
+        "checked": checked,
+        "signalled": signalled,
+    }
