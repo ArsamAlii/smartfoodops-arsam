@@ -19,6 +19,8 @@ from app.services.redis_service import (
     get_idempotency_key,
     set_idempotency_key,
 )
+
+
 def create_order(
     db: Session,
     customer_id: int,
@@ -29,6 +31,7 @@ def create_order(
     # -------------------------------------------------------
     # 1. Get Idempotency Key TTL
     # -------------------------------------------------------
+
     ttl_seconds = int(
         os.getenv(
             "IDEMPOTENCY_KEY_TTL_SECONDS",
@@ -41,6 +44,7 @@ def create_order(
     # -------------------------------------------------------
     # 2. Check Redis Idempotency Key
     # -------------------------------------------------------
+
     redis_order_id = get_idempotency_key(
         customer_id=customer_id,
         idempotency_key=idempotency_key,
@@ -66,6 +70,7 @@ def create_order(
     # -------------------------------------------------------
     # 3. Check PostgreSQL Idempotency Key
     # -------------------------------------------------------
+
     existing_key = (
         db.query(IdempotencyKey)
         .filter(
@@ -78,6 +83,7 @@ def create_order(
     # -------------------------------------------------------
     # 4. Return Existing Order If Key Is Still Valid
     # -------------------------------------------------------
+
     if existing_key:
 
         if existing_key.expires_at > now:
@@ -99,11 +105,11 @@ def create_order(
 
         db.delete(existing_key)
         db.flush()
-
+ 
     try:
 
         # ===================================================
-        # 4. Verify Restaurant
+        # 5. Verify Restaurant
         # ===================================================
 
         restaurant = (
@@ -124,17 +130,7 @@ def create_order(
             )
 
         # ===================================================
-        # 5. VALIDATE ALL ITEMS FIRST
-        # ===================================================
-        #
-        # IMPORTANT:
-        #
-        # Do NOT create the Order yet.
-        # Do NOT decrease stock yet.
-        #
-        # We first inspect every requested item and collect
-        # every validation error.
-        #
+        # 6. VALIDATE ALL ITEMS FIRST
         # ===================================================
 
         validation_errors = []
@@ -239,7 +235,7 @@ def create_order(
             )
 
         # ===================================================
-        # 6. Return ALL Validation Errors At Once
+        # 7. Return ALL Validation Errors At Once
         # ===================================================
 
         if validation_errors:
@@ -250,7 +246,7 @@ def create_order(
             )
 
         # ===================================================
-        # 7. Create Order
+        # 8. Create Order
         # ===================================================
 
         order = Order(
@@ -266,7 +262,7 @@ def create_order(
         total_amount = Decimal("0.00")
 
         # ===================================================
-        # 8. Process Validated Items
+        # 9. Process Validated Items
         # ===================================================
 
         for item_data, menu_item in validated_items:
@@ -301,16 +297,30 @@ def create_order(
             # ------------------------------------------------
 
             if menu_item.stock is not None:
+
+                print(
+                    f"[STOCK DEBUG] Order {order.order_id}: "
+                    f"menu_item={menu_item.menu_item_id}, "
+                    f"stock BEFORE={menu_item.stock}, "
+                    f"quantity={item_data.quantity}"
+                )
+
                 menu_item.stock -= item_data.quantity
 
+                print(
+                    f"[STOCK DEBUG] Order {order.order_id}: "
+                    f"menu_item={menu_item.menu_item_id}, "
+                    f"stock AFTER={menu_item.stock}"
+                )
+
         # ===================================================
-        # 9. Set Server-Side Order Total
+        # 10. Set Server-Side Order Total
         # ===================================================
 
         order.total_amount = total_amount
 
         # ===================================================
-        # 10. Authorize Payment
+        # 11. Authorize Payment
         # ===================================================
 
         authorizer = PaymentAuthorizer(db)
@@ -331,7 +341,7 @@ def create_order(
             raise ValueError(str(exc))
 
         # ===================================================
-        # 11. Initial Status History
+        # 12. Initial Status History
         # ===================================================
 
         status_history = OrderStatusHistory(
@@ -345,7 +355,7 @@ def create_order(
         db.add(status_history)
 
         # ===================================================
-        # 12. Save Idempotency Record
+        # 13. Save Idempotency Record
         # ===================================================
 
         idempotency_record = IdempotencyKey(
@@ -361,24 +371,53 @@ def create_order(
         db.add(idempotency_record)
 
         # ===================================================
-        # 13. Commit Everything Atomically
+        # 14. Debug Before Commit
+        # ===================================================
+
+        if validated_items:
+
+            debug_item = validated_items[0][1]
+
+            print(
+                f"[STOCK DEBUG] COMMITTING ORDER "
+                f"{order.order_id}: "
+                f"menu_item={debug_item.menu_item_id}, "
+                f"stock={debug_item.stock}"
+            )
+
+        # ===================================================
+        # 15. Commit Everything Atomically
         # ===================================================
 
         db.commit()
 
+        print(
+            f"[STOCK DEBUG] COMMIT SUCCESS "
+            f"for order {order.order_id}"
+        )
+
+        # ===================================================
+        # 16. Save Redis Idempotency Key
+        # ===================================================
+
         try:
+
             set_idempotency_key(
                 customer_id=customer_id,
                 idempotency_key=idempotency_key,
                 order_id=order.order_id,
                 ttl_seconds=ttl_seconds,
             )
+
         except Exception as exc:
+
             print(
-                f"Warning: failed to store idempotency key in Redis: {exc}"
+                f"Warning: failed to store "
+                f"idempotency key in Redis: {exc}"
             )
+
         # ===================================================
-        # 14. Reload Order
+        # 17. Reload Order
         # ===================================================
 
         order = (

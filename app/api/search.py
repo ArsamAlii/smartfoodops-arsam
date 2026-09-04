@@ -12,7 +12,7 @@ from app.schemas.search import (
     SearchResponse,
     SearchResult,
 )
-
+ 
 from app.services.content_chunk_service import (
     search_content_chunks,
 )
