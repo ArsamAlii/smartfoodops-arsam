@@ -1,4 +1,6 @@
 ## SmartFoodOps AI Layer
+Documentation Link:
+https://docs.google.com/document/d/1aBRBtsvaJvidWhXUdb5j3lFWZW4G8Ojg/edit
 
 The Week 5 AI layer provides:
 
