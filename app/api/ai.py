@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+import re
 import time
+from decimal import Decimal
 
 from fastapi import (
     APIRouter,
@@ -78,10 +80,138 @@ def sse_event(
 
 
 # =========================================================
+# PRICE FILTER HELPERS
+# =========================================================
+
+def extract_price_filter(question: str):
+    """
+    Extract simple price constraints from a natural-language
+    question.
+
+    Examples:
+
+        under 1000
+        below 500
+        less than 800
+        up to 1000
+        maximum 1200
+        max 700
+        at most 900
+
+        above 500
+        over 700
+        more than 800
+        greater than 1000
+        minimum 500
+        min 500
+        at least 600
+    """
+
+    question_lower = question.lower()
+
+    patterns = [
+        (
+            r"(?:under|below|less than|up to|maximum|max|at most)"
+            r"\s*(?:rs\.?|pkr)?\s*([\d,]+(?:\.\d+)?)",
+            "max",
+        ),
+        (
+            r"(?:above|over|more than|greater than|minimum|min|at least)"
+            r"\s*(?:rs\.?|pkr)?\s*([\d,]+(?:\.\d+)?)",
+            "min",
+        ),
+    ]
+
+    for pattern, filter_type in patterns:
+
+        match = re.search(
+            pattern,
+            question_lower,
+        )
+
+        if not match:
+            continue
+
+        value = match.group(1).replace(",", "")
+
+        try:
+            amount = Decimal(value)
+        except Exception:
+            return None
+
+        return {
+            "type": filter_type,
+            "amount": amount,
+        }
+
+    return None
+
+
+def matches_price_filter(
+    price,
+    price_filter,
+) -> bool:
+    """
+    Apply an extracted price constraint to the real
+    database menu-item price.
+    """
+
+    if price_filter is None:
+        return True
+
+    if price is None:
+        return False
+
+    try:
+        menu_price = Decimal(str(price))
+    except Exception:
+        return False
+
+    amount = price_filter["amount"]
+
+    if price_filter["type"] == "max":
+        return menu_price <= amount
+
+    if price_filter["type"] == "min":
+        return menu_price >= amount
+
+    return True
+
+
+# =========================================================
 # ASSISTANT ENDPOINT
 # =========================================================
 
-@router.post("/ask")
+@router.post(
+    "/ask",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "Server-Sent Events stream containing "
+                "text, citations, and completion events."
+            ),
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "type": "string",
+                    },
+                },
+            },
+        },
+        401: {
+            "description": "Authentication required.",
+        },
+        429: {
+            "description": "AI request rate limit exceeded.",
+        },
+        503: {
+            "description": (
+                "AI provider or dependent service unavailable."
+            ),
+        },
+    },
+)
 async def ask_assistant(
     request: AIAskRequest,
     db: Session = Depends(get_db),
@@ -94,7 +224,7 @@ async def ask_assistant(
     start_time = time.perf_counter()
 
     # =========================================================
-    # PART A CORRELATION ID
+    # CORRELATION ID
     # =========================================================
 
     correlation_id = request_correlation_id.get()
@@ -296,9 +426,7 @@ async def ask_assistant(
                     f"{history.reason}"
                 )
 
-            history_lines.append(
-                line
-            )
+            history_lines.append(line)
 
         history_context = "\n".join(
             history_lines
@@ -379,8 +507,6 @@ async def ask_assistant(
 
             generated_text = ""
 
-            # Cache key includes user + question +
-            # order ID.
             cache_key = make_ai_cache_key(
                 user_id=current_user.user_id,
                 question=request.question,
@@ -410,17 +536,12 @@ async def ask_assistant(
 
                     generated_text = cached_answer
 
-                    # Stream cached result as SSE.
-                    for token in cached_answer.split(
-                        " "
-                    ):
+                    for token in cached_answer.split(" "):
 
                         yield sse_event(
                             "text",
                             {
-                                "content": (
-                                    token + " "
-                                ),
+                                "content": token + " ",
                             },
                         )
 
@@ -433,7 +554,6 @@ async def ask_assistant(
                         ) * 1000
                     )
 
-                    # Record cache-hit interaction.
                     interaction = AIInteraction(
                         user_id=current_user.user_id,
                         question=request.question,
@@ -464,9 +584,7 @@ async def ask_assistant(
                         "citations",
                         {
                             "sources": [],
-                            "order_id": (
-                                order.order_id
-                            ),
+                            "order_id": order.order_id,
                             "cache_hit": True,
                         },
                     )
@@ -519,20 +637,12 @@ async def ask_assistant(
                         },
                     )
 
-                # -------------------------------------------------
-                # LATENCY
-                # -------------------------------------------------
-
                 latency_ms = int(
                     (
                         time.perf_counter()
                         - start_time
                     ) * 1000
                 )
-
-                # -------------------------------------------------
-                # PROMETHEUS
-                # -------------------------------------------------
 
                 AI_CALLS.labels(
                     assistance_type=(
@@ -549,10 +659,6 @@ async def ask_assistant(
                     latency_ms / 1000
                 )
 
-                # -------------------------------------------------
-                # SAVE CACHE
-                # -------------------------------------------------
-
                 await set_cached_ai_response(
                     cache_key,
                     {
@@ -562,10 +668,6 @@ async def ask_assistant(
                     },
                     ttl=60,
                 )
-
-                # -------------------------------------------------
-                # PERSIST INTERACTION
-                # -------------------------------------------------
 
                 interaction = AIInteraction(
                     user_id=current_user.user_id,
@@ -588,24 +690,14 @@ async def ask_assistant(
                 db.add(interaction)
                 db.commit()
 
-                # -------------------------------------------------
-                # CITATIONS
-                # -------------------------------------------------
-
                 yield sse_event(
                     "citations",
                     {
                         "sources": [],
-                        "order_id": (
-                            order.order_id
-                        ),
+                        "order_id": order.order_id,
                         "cache_hit": False,
                     },
                 )
-
-                # -------------------------------------------------
-                # DONE
-                # -------------------------------------------------
 
                 yield sse_event(
                     "done",
@@ -641,9 +733,7 @@ async def ask_assistant(
                         total_tokens=0,
                         latency_ms=latency_ms,
                         refused=False,
-                        correlation_id=(
-                            correlation_id
-                        ),
+                        correlation_id=correlation_id,
                     )
 
                     db.add(interaction)
@@ -697,7 +787,7 @@ async def ask_assistant(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
+                "X-Accel-Buffering": "no-cache",
             },
         )
 
@@ -720,6 +810,31 @@ async def ask_assistant(
     )
 
     # ---------------------------------------------------------
+    # DETECT STRUCTURED PRICE FILTER
+    # ---------------------------------------------------------
+
+    price_filter = extract_price_filter(
+        request.question
+    )
+
+    # Price-constrained questions need a larger semantic
+    # candidate pool because numeric constraints should be
+    # handled by the real database price field.
+    if price_filter is not None:
+
+        retrieval_limit = max(
+            retrieval_top_k,
+            50,
+        )
+
+        retrieval_similarity = 0.0
+
+    else:
+
+        retrieval_limit = retrieval_top_k
+        retrieval_similarity = retrieval_min_similarity
+
+    # ---------------------------------------------------------
     # RETRIEVE MENU CHUNKS
     # ---------------------------------------------------------
 
@@ -729,10 +844,8 @@ async def ask_assistant(
             db=db,
             query=request.question,
             current_user=current_user,
-            limit=retrieval_top_k,
-            similarity_threshold=(
-                retrieval_min_similarity
-            ),
+            limit=retrieval_limit,
+            similarity_threshold=retrieval_similarity,
         )
 
     except RuntimeError as exc:
@@ -789,6 +902,16 @@ async def ask_assistant(
             continue
 
         # -----------------------------------------------------
+        # STRUCTURED PRICE FILTER
+        # -----------------------------------------------------
+
+        if not matches_price_filter(
+            menu_item.price,
+            price_filter,
+        ):
+            continue
+
+        # -----------------------------------------------------
         # GROUNDED CONTEXT
         # -----------------------------------------------------
 
@@ -836,10 +959,30 @@ async def ask_assistant(
 
     if not context_parts:
 
-        answer = (
-            "I could not find a suitable orderable "
-            "item in the available restaurant menus."
-        )
+        if price_filter is not None:
+
+            if price_filter["type"] == "max":
+
+                answer = (
+                    "I could not find any available "
+                    "menu items within your price limit "
+                    f"of Rs {price_filter['amount']}."
+                )
+
+            else:
+
+                answer = (
+                    "I could not find any available "
+                    "menu items at or above "
+                    f"Rs {price_filter['amount']}."
+                )
+
+        else:
+
+            answer = (
+                "I could not find a suitable orderable "
+                "item in the available restaurant menus."
+            )
 
         latency_ms = int(
             (
@@ -923,7 +1066,6 @@ async def ask_assistant(
 
         generated_text = ""
 
-        # Cache key for discovery.
         cache_key = make_ai_cache_key(
             user_id=current_user.user_id,
             question=request.question,
@@ -958,24 +1100,14 @@ async def ask_assistant(
                     )
                 )
 
-                generated_text = (
-                    cached_answer
-                )
+                generated_text = cached_answer
 
-                # ---------------------------------------------
-                # STREAM CACHED ANSWER
-                # ---------------------------------------------
-
-                for token in cached_answer.split(
-                    " "
-                ):
+                for token in cached_answer.split(" "):
 
                     yield sse_event(
                         "text",
                         {
-                            "content": (
-                                token + " "
-                            ),
+                            "content": token + " ",
                         },
                     )
 
@@ -987,10 +1119,6 @@ async def ask_assistant(
                         - start_time
                     ) * 1000
                 )
-
-                # ---------------------------------------------
-                # SAVE CACHE-HIT INTERACTION
-                # ---------------------------------------------
 
                 interaction = AIInteraction(
                     user_id=current_user.user_id,
@@ -1012,9 +1140,7 @@ async def ask_assistant(
                     total_tokens=0,
                     latency_ms=latency_ms,
                     refused=False,
-                    correlation_id=(
-                        correlation_id
-                    ),
+                    correlation_id=correlation_id,
                 )
 
                 db.add(interaction)
@@ -1164,10 +1290,6 @@ async def ask_assistant(
 
         except asyncio.CancelledError:
 
-            # -------------------------------------------------
-            # CLIENT DISCONNECTED
-            # -------------------------------------------------
-
             latency_ms = int(
                 (
                     time.perf_counter()
@@ -1195,9 +1317,7 @@ async def ask_assistant(
                     total_tokens=0,
                     latency_ms=latency_ms,
                     refused=False,
-                    correlation_id=(
-                        correlation_id
-                    ),
+                    correlation_id=correlation_id,
                 )
 
                 db.add(interaction)

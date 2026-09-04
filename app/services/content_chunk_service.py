@@ -6,14 +6,16 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.content_chunk import ContentChunk
 from app.models.menu_category import MenuCategory
 from app.models.restaurant import Restaurant
+from app.models.enums import UserRole
+from app.models.users import User
 
 from app.services.embedding_service import generate_embedding
 
-from app.models.enums import UserRole
-from app.models.users import User
+
 # ---------------------------------------------------------
 # Build Menu Item Text
 # ---------------------------------------------------------
+
 def build_menu_item_text(
     restaurant: Restaurant,
     category: MenuCategory,
@@ -22,7 +24,9 @@ def build_menu_item_text(
     """
     Build the enriched text that will later be embedded.
 
-    Each chunk contains enough context to be meaningful on its own.
+    Price and availability are intentionally NOT included
+    in the embedding text because they are structured fields
+    and should be filtered using the database.
     """
 
     parts = [
@@ -43,6 +47,7 @@ def build_menu_item_text(
 # ---------------------------------------------------------
 # Calculate Text Hash
 # ---------------------------------------------------------
+
 def calculate_text_hash(text: str) -> str:
     """
     SHA-256 hash of the embedding input text.
@@ -59,6 +64,7 @@ def calculate_text_hash(text: str) -> str:
 # ---------------------------------------------------------
 # Estimate Token Count
 # ---------------------------------------------------------
+
 def estimate_token_count(text: str) -> int:
     """
     Lightweight token estimate.
@@ -68,6 +74,11 @@ def estimate_token_count(text: str) -> int:
     """
 
     return len(text.split())
+
+
+# ---------------------------------------------------------
+# Rebuild Restaurant Chunks
+# ---------------------------------------------------------
 
 def rebuild_restaurant_chunks(
     db: Session,
@@ -90,9 +101,9 @@ def rebuild_restaurant_chunks(
     the existing embedding is preserved.
     """
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Find restaurant
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     restaurant = db.get(
         Restaurant,
@@ -102,9 +113,9 @@ def rebuild_restaurant_chunks(
     if restaurant is None:
         raise ValueError("Restaurant not found")
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Load categories and menu items
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     categories = (
         db.query(MenuCategory)
@@ -121,9 +132,9 @@ def rebuild_restaurant_chunks(
         .all()
     )
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Existing chunks
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     existing_chunks = (
         db.query(ContentChunk)
@@ -142,9 +153,9 @@ def rebuild_restaurant_chunks(
 
     chunks_needing_embedding: list[int] = []
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Process menu items
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     for category in categories:
 
@@ -163,7 +174,7 @@ def rebuild_restaurant_chunks(
             )
 
             # -------------------------------------------------
-            # Build enriched embedding text
+            # Build embedding text
             # -------------------------------------------------
 
             text = build_menu_item_text(
@@ -265,16 +276,16 @@ def rebuild_restaurant_chunks(
 
             db.add(chunk)
 
-            # Force SQLAlchemy to obtain the generated ID.
+            # Force SQLAlchemy to obtain generated ID.
             db.flush()
 
             chunks_needing_embedding.append(
                 chunk.content_chunk_id
             )
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Remove stale chunks
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     for chunk in existing_chunks:
 
@@ -284,9 +295,9 @@ def rebuild_restaurant_chunks(
         ):
             db.delete(chunk)
 
-    # ---------------------------------------------------------
-    # Save all database changes
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
+    # Save database changes
+    # -----------------------------------------------------
 
     db.commit()
 
@@ -296,6 +307,7 @@ def rebuild_restaurant_chunks(
 # ---------------------------------------------------------
 # Semantic Search
 # ---------------------------------------------------------
+
 def search_content_chunks(
     db: Session,
     query: str,
@@ -315,7 +327,11 @@ def search_content_chunks(
         - may see unavailable items
         - may see items even when their restaurant is closed
 
-    All filtering is performed in the database query.
+    Price and other structured constraints are intentionally
+    handled by the caller after semantic retrieval.
+
+    This function is responsible for retrieving semantic
+    candidates while enforcing user access rules.
     """
 
     # -----------------------------------------------------
@@ -381,9 +397,7 @@ def search_content_chunks(
 
     else:
 
-        statement = statement.where(
-            False,
-        )
+        statement = statement.where(False)
 
     # -----------------------------------------------------
     # Ranking
